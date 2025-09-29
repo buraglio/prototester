@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -27,14 +30,14 @@ type PingResult struct {
 }
 
 type Statistics struct {
-	Sent     int
-	Received int
-	Lost     int
-	Min      time.Duration
-	Max      time.Duration
-	Avg      time.Duration
-	StdDev   time.Duration
-	Jitter   time.Duration
+	Sent      int
+	Received  int
+	Lost      int
+	Min       time.Duration
+	Max       time.Duration
+	Avg       time.Duration
+	StdDev    time.Duration
+	Jitter    time.Duration
 	Latencies []time.Duration
 }
 
@@ -54,6 +57,9 @@ type LatencyTester struct {
 	udpMode     bool
 	icmpMode    bool
 	httpMode    bool
+	dnsMode     bool
+	dnsProtocol string // "udp", "tcp", "dot", "doh"
+	dnsQuery    string // domain to query
 	compareMode bool
 	results4    []PingResult
 	results6    []PingResult
@@ -61,15 +67,40 @@ type LatencyTester struct {
 }
 
 type ComparisonResult struct {
-	TCPv4Stats     Statistics
-	TCPv6Stats     Statistics
-	UDPv4Stats     Statistics
-	UDPv6Stats     Statistics
-	IPv4Score      float64
-	IPv6Score      float64
-	Winner         string
-	ResolvedIPv4   string
-	ResolvedIPv6   string
+	TCPv4Stats   Statistics
+	TCPv6Stats   Statistics
+	UDPv4Stats   Statistics
+	UDPv6Stats   Statistics
+	IPv4Score    float64
+	IPv6Score    float64
+	Winner       string
+	ResolvedIPv4 string
+	ResolvedIPv6 string
+}
+
+// DNS query structures
+type DNSHeader struct {
+	ID      uint16
+	Flags   uint16
+	QDCount uint16
+	ANCount uint16
+	NSCount uint16
+	ARCount uint16
+}
+
+type DNSQuestion struct {
+	Name  string
+	Type  uint16
+	Class uint16
+}
+
+type DoHRequest struct {
+	Questions []DoHQuestion `json:"question"`
+}
+
+type DoHQuestion struct {
+	Name string `json:"name"`
+	Type int    `json:"type"`
 }
 
 func main() {
@@ -77,7 +108,7 @@ func main() {
 		target4     = flag.String("4", "8.8.8.8", "IPv4 target address (auto-enables IPv4-only if custom)")
 		target6     = flag.String("6", "2001:4860:4860::8888", "IPv6 target address (auto-enables IPv6-only if custom)")
 		hostname    = flag.String("compare", "", "Compare mode: resolve hostname and test both TCP/UDP on IPv4/IPv6")
-		port        = flag.Int("p", 53, "Port to test (for TCP/UDP/HTTP modes)")
+		port        = flag.Int("p", 53, "Port to test (for TCP/UDP/HTTP/DNS modes)")
 		count       = flag.Int("c", 10, "Number of tests to perform")
 		interval    = flag.Duration("i", time.Second, "Interval between tests")
 		timeout     = flag.Duration("timeout", 3*time.Second, "Timeout for each test")
@@ -89,8 +120,22 @@ func main() {
 		udpMode     = flag.Bool("u", false, "Use UDP test")
 		icmpMode    = flag.Bool("icmp", false, "Use ICMP ping test (may require root on some systems)")
 		httpMode    = flag.Bool("http", false, "Use HTTP/HTTPS timing test")
+		dnsMode     = flag.Bool("dns", false, "Use DNS query testing")
+		dnsProtocol = flag.String("dns-protocol", "udp", "DNS protocol: udp, tcp, dot, doh")
+		dnsQuery    = flag.String("dns-query", "dns.qosbox.com", "Domain name to query for DNS testing")
 	)
 	flag.Parse()
+
+	// Validate DNS protocol
+	validDNSProtocols := map[string]bool{
+		"udp": true,
+		"tcp": true,
+		"dot": true,
+		"doh": true,
+	}
+	if !validDNSProtocols[*dnsProtocol] {
+		log.Fatal("Invalid DNS protocol. Must be one of: udp, tcp, dot, doh")
+	}
 
 	// Validate flags - only one protocol mode can be active
 	modeCount := 0
@@ -106,9 +151,12 @@ func main() {
 	if *httpMode {
 		modeCount++
 	}
+	if *dnsMode {
+		modeCount++
+	}
 
 	if modeCount > 1 {
-		log.Fatal("Cannot specify multiple protocol flags (-t, -u, -icmp, -http) simultaneously")
+		log.Fatal("Cannot specify multiple protocol flags (-t, -u, -icmp, -http, -dns) simultaneously")
 	}
 
 	// If no explicit mode is set, default to TCP
@@ -118,7 +166,7 @@ func main() {
 	}
 
 	compareMode := *hostname != ""
-	if compareMode && (*tcpMode || *udpMode || *icmpMode || *httpMode) {
+	if compareMode && (*tcpMode || *udpMode || *icmpMode || *httpMode || *dnsMode) {
 		log.Fatal("Compare mode cannot be used with protocol flags (compare mode tests both TCP and UDP)")
 	}
 
@@ -152,6 +200,9 @@ func main() {
 		udpMode:     *udpMode,
 		icmpMode:    *icmpMode,
 		httpMode:    *httpMode,
+		dnsMode:     *dnsMode,
+		dnsProtocol: *dnsProtocol,
+		dnsQuery:    *dnsQuery,
 		compareMode: compareMode,
 	}
 
@@ -165,14 +216,20 @@ func main() {
 			protocol = "ICMP"
 		} else if *httpMode {
 			protocol = "HTTP/HTTPS"
+		} else if *dnsMode {
+			protocol = fmt.Sprintf("DNS (%s)", strings.ToUpper(*dnsProtocol))
 		}
 
 		fmt.Printf("High-Fidelity IPv4/IPv6 Latency Tester (%s)\n", protocol)
 		fmt.Printf("===============================================\n\n")
 
 		if !*ipv4Only {
-			if *tcpMode || *udpMode || *httpMode {
-				fmt.Printf("Testing IPv6 connectivity to [%s]:%d...\n", *target6, *port)
+			if *tcpMode || *udpMode || *httpMode || *dnsMode {
+				if *dnsMode {
+					fmt.Printf("Testing IPv6 DNS to [%s]:%d (query: %s)...\n", *target6, *port, *dnsQuery)
+				} else {
+					fmt.Printf("Testing IPv6 connectivity to [%s]:%d...\n", *target6, *port)
+				}
 			} else {
 				fmt.Printf("Testing IPv6 connectivity to %s...\n", *target6)
 			}
@@ -180,8 +237,12 @@ func main() {
 		}
 
 		if !*ipv6Only {
-			if *tcpMode || *udpMode || *httpMode {
-				fmt.Printf("Testing IPv4 connectivity to %s:%d...\n", *target4, *port)
+			if *tcpMode || *udpMode || *httpMode || *dnsMode {
+				if *dnsMode {
+					fmt.Printf("Testing IPv4 DNS to %s:%d (query: %s)...\n", *target4, *port, *dnsQuery)
+				} else {
+					fmt.Printf("Testing IPv4 connectivity to %s:%d...\n", *target4, *port)
+				}
 			} else {
 				fmt.Printf("Testing IPv4 connectivity to %s...\n", *target4)
 			}
@@ -203,8 +264,10 @@ func (lt *LatencyTester) testIPv4() {
 			result = lt.testUDPConnect("udp4", lt.target4, i+1)
 		} else if lt.httpMode {
 			result = lt.testHTTP("4", lt.target4, i+1)
+		} else if lt.dnsMode {
+			result = lt.testDNS("4", lt.target4, i+1)
 		} else if lt.icmpMode {
-			result = lt.testICMPv4(i+1)
+			result = lt.testICMPv4(i + 1)
 		} else {
 			// Default TCP mode
 			result = lt.testTCPConnect("tcp4", lt.target4, i+1)
@@ -239,8 +302,10 @@ func (lt *LatencyTester) testIPv6() {
 			result = lt.testUDPConnect("udp6", lt.target6, i+1)
 		} else if lt.httpMode {
 			result = lt.testHTTP("6", lt.target6, i+1)
+		} else if lt.dnsMode {
+			result = lt.testDNS("6", lt.target6, i+1)
 		} else if lt.icmpMode {
-			result = lt.testICMPv6(i+1)
+			result = lt.testICMPv6(i + 1)
 		} else {
 			// Default TCP mode
 			result = lt.testTCPConnect("tcp6", lt.target6, i+1)
@@ -327,13 +392,13 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMP Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMP header + data
-	packet[0] = 8  // ICMP Echo Request
-	packet[1] = 0  // Code
-	packet[2] = 0  // Checksum (kernel will calculate for SOCK_DGRAM)
-	packet[3] = 0  // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
+	packet[0] = 8                                        // ICMP Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (kernel will calculate for SOCK_DGRAM)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -386,13 +451,13 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMP Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMP header + data
-	packet[0] = 8  // ICMP Echo Request
-	packet[1] = 0  // Code
-	packet[2] = 0  // Checksum (will be calculated)
-	packet[3] = 0  // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
+	packet[0] = 8                                        // ICMP Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (will be calculated)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -514,13 +579,13 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMPv6 Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMPv6 header + data
-	packet[0] = 128 // ICMPv6 Echo Request
-	packet[1] = 0   // Code
-	packet[2] = 0   // Checksum (kernel will calculate for SOCK_DGRAM)
-	packet[3] = 0   // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
+	packet[0] = 128                                      // ICMPv6 Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (kernel will calculate for SOCK_DGRAM)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -573,13 +638,13 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMPv6 Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMPv6 header + data
-	packet[0] = 128 // ICMPv6 Echo Request
-	packet[1] = 0   // Code
-	packet[2] = 0   // Checksum (will be calculated by kernel for IPv6)
-	packet[3] = 0   // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
+	packet[0] = 128                                      // ICMPv6 Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (will be calculated by kernel for IPv6)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -648,7 +713,7 @@ func (lt *LatencyTester) testHTTP(ipVersion, target string, seq int) PingResult 
 
 	// Create HTTP client with timeout and custom transport
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // Skip cert verification for testing
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // Skip cert verification for testing
 		DisableKeepAlives: true,
 	}
 
@@ -679,6 +744,377 @@ func (lt *LatencyTester) testHTTP(ipVersion, target string, seq int) PingResult 
 
 	latency := time.Since(start)
 	return PingResult{Success: true, Latency: latency, Timestamp: start}
+}
+
+func (lt *LatencyTester) testDNS(ipVersion, target string, seq int) PingResult {
+	switch lt.dnsProtocol {
+	case "udp":
+		return lt.testDNSUDP(ipVersion, target, seq)
+	case "tcp":
+		return lt.testDNSTCP(ipVersion, target, seq)
+	case "dot":
+		return lt.testDNSDoT(ipVersion, target, seq)
+	case "doh":
+		return lt.testDNSDoH(ipVersion, target, seq)
+	default:
+		return PingResult{Success: false, Error: fmt.Errorf("unsupported DNS protocol: %s", lt.dnsProtocol), Timestamp: time.Now()}
+	}
+}
+
+func (lt *LatencyTester) testDNSUDP(ipVersion, target string, seq int) PingResult {
+	start := time.Now()
+
+	// Build DNS query packet
+	queryPacket, err := lt.buildDNSQuery()
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("failed to build DNS query: %v", err), Timestamp: start}
+	}
+
+	// Create UDP connection
+	var address string
+	if ipVersion == "6" {
+		address = fmt.Sprintf("[%s]:%d", target, lt.port)
+	} else {
+		address = fmt.Sprintf("%s:%d", target, lt.port)
+	}
+
+	network := "udp" + ipVersion
+	conn, err := net.DialTimeout(network, address, lt.timeout)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+	defer conn.Close()
+
+	// Send DNS query
+	conn.SetWriteDeadline(time.Now().Add(lt.timeout))
+	_, err = conn.Write(queryPacket)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Read DNS response
+	conn.SetReadDeadline(time.Now().Add(lt.timeout))
+	response := make([]byte, 512) // Standard DNS UDP response size
+	n, err := conn.Read(response)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Validate DNS response
+	if n < 12 { // Minimum DNS header size
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too short: %d bytes", n), Timestamp: start}
+	}
+
+	// Check if response ID matches query ID
+	responseID := binary.BigEndian.Uint16(response[0:2])
+	queryID := binary.BigEndian.Uint16(queryPacket[0:2])
+	if responseID != queryID {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response ID mismatch: got %d, expected %d", responseID, queryID), Timestamp: start}
+	}
+
+	latency := time.Since(start)
+	return PingResult{Success: true, Latency: latency, Timestamp: start}
+}
+
+func (lt *LatencyTester) testDNSTCP(ipVersion, target string, seq int) PingResult {
+	start := time.Now()
+
+	// Build DNS query packet
+	queryPacket, err := lt.buildDNSQuery()
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("failed to build DNS query: %v", err), Timestamp: start}
+	}
+
+	// Create TCP connection
+	var address string
+	if ipVersion == "6" {
+		address = fmt.Sprintf("[%s]:%d", target, lt.port)
+	} else {
+		address = fmt.Sprintf("%s:%d", target, lt.port)
+	}
+
+	network := "tcp" + ipVersion
+	conn, err := net.DialTimeout(network, address, lt.timeout)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+	defer conn.Close()
+
+	// TCP DNS requires length prefix (2 bytes)
+	lengthPrefix := make([]byte, 2)
+	binary.BigEndian.PutUint16(lengthPrefix, uint16(len(queryPacket)))
+	tcpQuery := append(lengthPrefix, queryPacket...)
+
+	// Send DNS query
+	conn.SetWriteDeadline(time.Now().Add(lt.timeout))
+	_, err = conn.Write(tcpQuery)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Read response length
+	conn.SetReadDeadline(time.Now().Add(lt.timeout))
+	lengthBytes := make([]byte, 2)
+	_, err = io.ReadFull(conn, lengthBytes)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	responseLength := binary.BigEndian.Uint16(lengthBytes)
+	if responseLength > 4096 { // Sanity check
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too large: %d bytes", responseLength), Timestamp: start}
+	}
+
+	// Read DNS response
+	response := make([]byte, responseLength)
+	_, err = io.ReadFull(conn, response)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Validate DNS response
+	if len(response) < 12 {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too short: %d bytes", len(response)), Timestamp: start}
+	}
+
+	// Check if response ID matches query ID
+	responseID := binary.BigEndian.Uint16(response[0:2])
+	queryID := binary.BigEndian.Uint16(queryPacket[0:2])
+	if responseID != queryID {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response ID mismatch: got %d, expected %d", responseID, queryID), Timestamp: start}
+	}
+
+	latency := time.Since(start)
+	return PingResult{Success: true, Latency: latency, Timestamp: start}
+}
+
+func (lt *LatencyTester) testDNSDoT(ipVersion, target string, seq int) PingResult {
+	start := time.Now()
+
+	// Build DNS query packet
+	queryPacket, err := lt.buildDNSQuery()
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("failed to build DNS query: %v", err), Timestamp: start}
+	}
+
+	// Create TLS connection
+	var address string
+	if ipVersion == "6" {
+		address = fmt.Sprintf("[%s]:%d", target, lt.port)
+	} else {
+		address = fmt.Sprintf("%s:%d", target, lt.port)
+	}
+
+	config := &tls.Config{
+		InsecureSkipVerify: true, // For testing purposes
+		ServerName:         target,
+	}
+
+	dialer := &net.Dialer{Timeout: lt.timeout}
+	network := "tcp" + ipVersion
+	conn, err := tls.DialWithDialer(dialer, network, address, config)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+	defer conn.Close()
+
+	// TCP DNS requires length prefix (2 bytes)
+	lengthPrefix := make([]byte, 2)
+	binary.BigEndian.PutUint16(lengthPrefix, uint16(len(queryPacket)))
+	tcpQuery := append(lengthPrefix, queryPacket...)
+
+	// Send DNS query
+	conn.SetWriteDeadline(time.Now().Add(lt.timeout))
+	_, err = conn.Write(tcpQuery)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Read response length
+	conn.SetReadDeadline(time.Now().Add(lt.timeout))
+	lengthBytes := make([]byte, 2)
+	_, err = io.ReadFull(conn, lengthBytes)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	responseLength := binary.BigEndian.Uint16(lengthBytes)
+	if responseLength > 4096 { // Sanity check
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too large: %d bytes", responseLength), Timestamp: start}
+	}
+
+	// Read DNS response
+	response := make([]byte, responseLength)
+	_, err = io.ReadFull(conn, response)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Validate DNS response
+	if len(response) < 12 {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too short: %d bytes", len(response)), Timestamp: start}
+	}
+
+	// Check if response ID matches query ID
+	responseID := binary.BigEndian.Uint16(response[0:2])
+	queryID := binary.BigEndian.Uint16(queryPacket[0:2])
+	if responseID != queryID {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response ID mismatch: got %d, expected %d", responseID, queryID), Timestamp: start}
+	}
+
+	latency := time.Since(start)
+	return PingResult{Success: true, Latency: latency, Timestamp: start}
+}
+
+func (lt *LatencyTester) testDNSDoH(ipVersion, target string, seq int) PingResult {
+	start := time.Now()
+
+	// Build DNS query packet
+	queryPacket, err := lt.buildDNSQuery()
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("failed to build DNS query: %v", err), Timestamp: start}
+	}
+
+	// Create HTTPS URL
+	var baseURL string
+	var port int
+	if lt.port == 443 {
+		port = 443
+	} else {
+		port = lt.port
+	}
+
+	if ipVersion == "6" {
+		baseURL = fmt.Sprintf("https://[%s]:%d/dns-query", target, port)
+	} else {
+		baseURL = fmt.Sprintf("https://%s:%d/dns-query", target, port)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", baseURL, bytes.NewReader(queryPacket))
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+
+	// Create HTTP client with custom transport
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true, // For testing purposes
+		},
+		DisableKeepAlives: true,
+	}
+
+	// Force IPv4 or IPv6
+	if ipVersion == "4" {
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialer := &net.Dialer{Timeout: lt.timeout}
+			return dialer.DialContext(ctx, "tcp4", addr)
+		}
+	} else {
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialer := &net.Dialer{Timeout: lt.timeout}
+			return dialer.DialContext(ctx, "tcp6", addr)
+		}
+	}
+
+	client := &http.Client{
+		Timeout:   lt.timeout,
+		Transport: transport,
+	}
+
+	// Make HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return PingResult{Success: false, Error: fmt.Errorf("HTTP status %d: %s", resp.StatusCode, resp.Status), Timestamp: start}
+	}
+
+	// Read DNS response
+	response, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return PingResult{Success: false, Error: err, Timestamp: start}
+	}
+
+	// Validate DNS response
+	if len(response) < 12 {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response too short: %d bytes", len(response)), Timestamp: start}
+	}
+
+	// Check if response ID matches query ID
+	responseID := binary.BigEndian.Uint16(response[0:2])
+	queryID := binary.BigEndian.Uint16(queryPacket[0:2])
+	if responseID != queryID {
+		return PingResult{Success: false, Error: fmt.Errorf("DNS response ID mismatch: got %d, expected %d", responseID, queryID), Timestamp: start}
+	}
+
+	latency := time.Since(start)
+	return PingResult{Success: true, Latency: latency, Timestamp: start}
+}
+
+func (lt *LatencyTester) buildDNSQuery() ([]byte, error) {
+	// Generate random query ID
+	queryID := make([]byte, 2)
+	_, err := rand.Read(queryID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build DNS header
+	header := DNSHeader{
+		ID:      binary.BigEndian.Uint16(queryID),
+		Flags:   0x0100, // Standard query, recursion desired
+		QDCount: 1,      // One question
+		ANCount: 0,
+		NSCount: 0,
+		ARCount: 0,
+	}
+
+	// Build DNS question
+	question := DNSQuestion{
+		Name:  lt.dnsQuery,
+		Type:  1, // A record
+		Class: 1, // IN class
+	}
+
+	// Serialize DNS packet
+	packet := make([]byte, 0, 512)
+
+	// Add header
+	headerBytes := make([]byte, 12)
+	binary.BigEndian.PutUint16(headerBytes[0:2], header.ID)
+	binary.BigEndian.PutUint16(headerBytes[2:4], header.Flags)
+	binary.BigEndian.PutUint16(headerBytes[4:6], header.QDCount)
+	binary.BigEndian.PutUint16(headerBytes[6:8], header.ANCount)
+	binary.BigEndian.PutUint16(headerBytes[8:10], header.NSCount)
+	binary.BigEndian.PutUint16(headerBytes[10:12], header.ARCount)
+	packet = append(packet, headerBytes...)
+
+	// Add question
+	// Encode domain name
+	domainParts := strings.Split(question.Name, ".")
+	for _, part := range domainParts {
+		if len(part) > 63 {
+			return nil, fmt.Errorf("domain label too long: %s", part)
+		}
+		packet = append(packet, byte(len(part)))
+		packet = append(packet, []byte(part)...)
+	}
+	packet = append(packet, 0) // Null terminator
+
+	// Add type and class
+	typeClassBytes := make([]byte, 4)
+	binary.BigEndian.PutUint16(typeClassBytes[0:2], question.Type)
+	binary.BigEndian.PutUint16(typeClassBytes[2:4], question.Class)
+	packet = append(packet, typeClassBytes...)
+
+	return packet, nil
 }
 
 // calculateChecksum calculates the ICMP checksum
@@ -935,7 +1371,7 @@ func (lt *LatencyTester) printComparisonResults(result *ComparisonResult) {
 	fmt.Printf(strings.Repeat("-", 40) + "\n")
 	fmt.Printf("IPv6 Score: %.2f\n", result.IPv6Score)
 	fmt.Printf("IPv4 Score: %.2f\n", result.IPv4Score)
-	fmt.Printf("\n🏆 Winner: %s", result.Winner)
+	fmt.Printf("\n Winner: %s", result.Winner)
 
 	if result.Winner != "Tie" {
 		scorePercent := 0.0
@@ -1052,6 +1488,8 @@ func (lt *LatencyTester) printProtocolStats(protocol, target string, stats Stati
 		testType = "UDP Tests"
 	} else if lt.httpMode {
 		testType = "HTTP Requests"
+	} else if lt.dnsMode {
+		testType = fmt.Sprintf("DNS Queries (%s)", strings.ToUpper(lt.dnsProtocol))
 	}
 
 	lossType := "loss"
@@ -1060,6 +1498,8 @@ func (lt *LatencyTester) printProtocolStats(protocol, target string, stats Stati
 	} else if lt.udpMode {
 		lossType = "failed"
 	} else if lt.httpMode {
+		lossType = "failed"
+	} else if lt.dnsMode {
 		lossType = "failed"
 	}
 
@@ -1117,7 +1557,7 @@ func (lt *LatencyTester) printComparison() {
 		success6 := float64(stats6.Received) / float64(stats6.Sent) * 100
 		success4 := float64(stats4.Received) / float64(stats4.Sent) * 100
 
-		if lt.tcpMode || lt.udpMode || lt.httpMode {
+		if lt.tcpMode || lt.udpMode || lt.httpMode || lt.dnsMode {
 			fmt.Printf("Success rate: IPv6=%.1f%% IPv4=%.1f%%\n", success6, success4)
 		} else {
 			loss6 := float64(stats6.Lost) / float64(stats6.Sent) * 100
