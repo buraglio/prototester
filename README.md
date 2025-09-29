@@ -278,7 +278,7 @@ Overall Performance Ranking
 IPv6 Score: 31.17
 IPv4 Score: 24.38
 
-🏆 Winner: IPv6 (27.9% better)
+Winner: IPv6 (27.9% better)
 
 Scoring: Based on success rate and latency (lower latency + higher success = higher score)
 Weighting: TCP 60%, UDP 40%

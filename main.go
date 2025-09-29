@@ -30,14 +30,14 @@ type PingResult struct {
 }
 
 type Statistics struct {
-	Sent     int
-	Received int
-	Lost     int
-	Min      time.Duration
-	Max      time.Duration
-	Avg      time.Duration
-	StdDev   time.Duration
-	Jitter   time.Duration
+	Sent      int
+	Received  int
+	Lost      int
+	Min       time.Duration
+	Max       time.Duration
+	Avg       time.Duration
+	StdDev    time.Duration
+	Jitter    time.Duration
 	Latencies []time.Duration
 }
 
@@ -67,15 +67,15 @@ type LatencyTester struct {
 }
 
 type ComparisonResult struct {
-	TCPv4Stats     Statistics
-	TCPv6Stats     Statistics
-	UDPv4Stats     Statistics
-	UDPv6Stats     Statistics
-	IPv4Score      float64
-	IPv6Score      float64
-	Winner         string
-	ResolvedIPv4   string
-	ResolvedIPv6   string
+	TCPv4Stats   Statistics
+	TCPv6Stats   Statistics
+	UDPv4Stats   Statistics
+	UDPv6Stats   Statistics
+	IPv4Score    float64
+	IPv6Score    float64
+	Winner       string
+	ResolvedIPv4 string
+	ResolvedIPv6 string
 }
 
 // DNS query structures
@@ -267,7 +267,7 @@ func (lt *LatencyTester) testIPv4() {
 		} else if lt.dnsMode {
 			result = lt.testDNS("4", lt.target4, i+1)
 		} else if lt.icmpMode {
-			result = lt.testICMPv4(i+1)
+			result = lt.testICMPv4(i + 1)
 		} else {
 			// Default TCP mode
 			result = lt.testTCPConnect("tcp4", lt.target4, i+1)
@@ -305,7 +305,7 @@ func (lt *LatencyTester) testIPv6() {
 		} else if lt.dnsMode {
 			result = lt.testDNS("6", lt.target6, i+1)
 		} else if lt.icmpMode {
-			result = lt.testICMPv6(i+1)
+			result = lt.testICMPv6(i + 1)
 		} else {
 			// Default TCP mode
 			result = lt.testTCPConnect("tcp6", lt.target6, i+1)
@@ -392,13 +392,13 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMP Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMP header + data
-	packet[0] = 8  // ICMP Echo Request
-	packet[1] = 0  // Code
-	packet[2] = 0  // Checksum (kernel will calculate for SOCK_DGRAM)
-	packet[3] = 0  // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
+	packet[0] = 8                                        // ICMP Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (kernel will calculate for SOCK_DGRAM)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -451,13 +451,13 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMP Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMP header + data
-	packet[0] = 8  // ICMP Echo Request
-	packet[1] = 0  // Code
-	packet[2] = 0  // Checksum (will be calculated)
-	packet[3] = 0  // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
+	packet[0] = 8                                        // ICMP Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (will be calculated)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -579,13 +579,13 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMPv6 Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMPv6 header + data
-	packet[0] = 128 // ICMPv6 Echo Request
-	packet[1] = 0   // Code
-	packet[2] = 0   // Checksum (kernel will calculate for SOCK_DGRAM)
-	packet[3] = 0   // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
+	packet[0] = 128                                      // ICMPv6 Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (kernel will calculate for SOCK_DGRAM)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -638,13 +638,13 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	pid := os.Getpid() & 0xffff
 
 	// Create ICMPv6 Echo Request packet
-	packet := make([]byte, 8+lt.size) // 8 bytes ICMPv6 header + data
-	packet[0] = 128 // ICMPv6 Echo Request
-	packet[1] = 0   // Code
-	packet[2] = 0   // Checksum (will be calculated by kernel for IPv6)
-	packet[3] = 0   // Checksum
-	binary.BigEndian.PutUint16(packet[4:6], uint16(pid))  // ID
-	binary.BigEndian.PutUint16(packet[6:8], uint16(seq))  // Sequence
+	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
+	packet[0] = 128                                      // ICMPv6 Echo Request
+	packet[1] = 0                                        // Code
+	packet[2] = 0                                        // Checksum (will be calculated by kernel for IPv6)
+	packet[3] = 0                                        // Checksum
+	binary.BigEndian.PutUint16(packet[4:6], uint16(pid)) // ID
+	binary.BigEndian.PutUint16(packet[6:8], uint16(seq)) // Sequence
 
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
@@ -713,7 +713,7 @@ func (lt *LatencyTester) testHTTP(ipVersion, target string, seq int) PingResult 
 
 	// Create HTTP client with timeout and custom transport
 	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // Skip cert verification for testing
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, // Skip cert verification for testing
 		DisableKeepAlives: true,
 	}
 
@@ -1371,7 +1371,7 @@ func (lt *LatencyTester) printComparisonResults(result *ComparisonResult) {
 	fmt.Printf(strings.Repeat("-", 40) + "\n")
 	fmt.Printf("IPv6 Score: %.2f\n", result.IPv6Score)
 	fmt.Printf("IPv4 Score: %.2f\n", result.IPv4Score)
-	fmt.Printf("\n🏆 Winner: %s", result.Winner)
+	fmt.Printf("\n Winner: %s", result.Winner)
 
 	if result.Winner != "Tie" {
 		scorePercent := 0.0
