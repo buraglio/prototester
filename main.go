@@ -122,7 +122,7 @@ func main() {
 		httpMode    = flag.Bool("http", false, "Use HTTP/HTTPS timing test")
 		dnsMode     = flag.Bool("dns", false, "Use DNS query testing")
 		dnsProtocol = flag.String("dns-protocol", "udp", "DNS protocol: udp, tcp, dot, doh")
-		dnsQuery    = flag.String("dns-query", "dns.qosbox.com", "Domain name to query for DNS testing")
+		dnsQuery    = flag.String("dns-query", "dns-query.qosbox.com", "Domain name to query for DNS testing")
 	)
 	flag.Parse()
 

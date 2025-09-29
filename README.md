@@ -68,7 +68,7 @@ go build -o prototester main.go
 ./prototester -dns -dns-query google.com
 
 # Test specific DNS server
-./prototester -dns -4 1.1.1.1 -dns-query dns.qosbox.com
+./prototester -dns -4 1.1.1.1 -dns-query dns-query.qosbox.com
 ```
 
 #### TCP Connect Testing (Default - No Root Required)
@@ -150,7 +150,7 @@ sudo ./prototester -icmp
 - `-p <port>`: Port to test (TCP/UDP/HTTP/DNS modes, default: 53)
 - `-s <size>`: Packet size in bytes (ICMP only, default: 64)
 - `-dns-protocol <protocol>`: DNS protocol: udp, tcp, dot, doh (default: udp)
-- `-dns-query <domain>`: Domain name to query for DNS testing (default: dns.qosbox.com)
+- `-dns-query <domain>`: Domain name to query for DNS testing (default: dns-query.qosbox.com)
 
 ### IPv4/IPv6 Options
 - `-4only`: Test IPv4 only
@@ -308,8 +308,8 @@ Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 High-Fidelity IPv4/IPv6 Latency Tester (DNS (UDP))
 ===============================================
 
-Testing IPv6 DNS to [2001:4860:4860::8888]:53 (query: dns.qosbox.com)...
-Testing IPv4 DNS to 8.8.8.8:53 (query: dns.qosbox.com)...
+Testing IPv6 DNS to [2001:4860:4860::8888]:53 (query: dns-query.qosbox.com)...
+Testing IPv4 DNS to 8.8.8.8:53 (query: dns-query.qosbox.com)...
 
 ============================================================
 LATENCY TEST RESULTS
@@ -369,7 +369,7 @@ Success rate: IPv6=100.0% IPv4=100.0%
 #### DNS Mode (High-Fidelity DNS Testing)
 - **UDP DNS**: Traditional DNS queries over UDP (RFC 1035)
   - Fastest DNS protocol, minimal overhead
-  - Uses dns.qosbox.com as default test domain
+  - Uses dns-query.qosbox.com as default test domain
   - Validates response ID matching for accuracy
 - **TCP DNS**: DNS queries over TCP for larger responses
   - Handles DNS responses larger than 512 bytes
@@ -509,11 +509,11 @@ The DNS testing feature provides comprehensive analysis of DNS performance acros
 ./prototester -dns -dns-protocol dot -4 1.1.1.1 -p 853 -c 100  # DoT monitoring
 
 # Privacy-focused DNS testing
-./prototester -dns -dns-protocol doh -4 1.1.1.1 -p 443 -dns-query dns.qosbox.com
+./prototester -dns -dns-protocol doh -4 1.1.1.1 -p 443 -dns-query dns-query.qosbox.com
 ```
 
 ### Default Test Domain
-The tool uses `dns.qosbox.com` as the default query domain, which is specifically designed for DNS performance testing and provides consistent, reliable responses across all DNS protocols.
+The tool uses `dns-query.qosbox.com` as the default query domain, which is specifically designed for DNS performance testing and provides consistent, reliable responses across all DNS protocols.
 
 ## Use Cases
 
