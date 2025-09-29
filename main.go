@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -23,22 +24,45 @@ import (
 )
 
 type PingResult struct {
-	Success   bool
-	Latency   time.Duration
-	Error     error
-	Timestamp time.Time
+	Success   bool          `json:"success"`
+	Latency   time.Duration `json:"latency_ms"`
+	Error     error         `json:"error,omitempty"`
+	Timestamp time.Time     `json:"timestamp"`
+}
+
+type JSONOutput struct {
+	Mode         string            `json:"mode"`
+	Protocol     string            `json:"protocol"`
+	Targets      map[string]string `json:"targets"`
+	IPv4Results  Statistics        `json:"ipv4_results,omitempty"`
+	IPv6Results  Statistics        `json:"ipv6_results,omitempty"`
+	Comparison   *ComparisonResult `json:"comparison,omitempty"`
+	TestConfig   TestConfig        `json:"test_config"`
+	Timestamp    time.Time         `json:"timestamp"`
+}
+
+type TestConfig struct {
+	Count       int           `json:"count"`
+	Interval    time.Duration `json:"interval_ms"`
+	Timeout     time.Duration `json:"timeout_ms"`
+	Port        int           `json:"port"`
+	Size        int           `json:"size,omitempty"`
+	DNSQuery    string        `json:"dns_query,omitempty"`
+	DNSProtocol string        `json:"dns_protocol,omitempty"`
+	Verbose     bool          `json:"verbose"`
 }
 
 type Statistics struct {
-	Sent      int
-	Received  int
-	Lost      int
-	Min       time.Duration
-	Max       time.Duration
-	Avg       time.Duration
-	StdDev    time.Duration
-	Jitter    time.Duration
-	Latencies []time.Duration
+	Sent        int             `json:"sent"`
+	Received    int             `json:"received"`
+	Lost        int             `json:"lost"`
+	Min         time.Duration   `json:"min_ms"`
+	Max         time.Duration   `json:"max_ms"`
+	Avg         time.Duration   `json:"avg_ms"`
+	StdDev      time.Duration   `json:"stddev_ms"`
+	Jitter      time.Duration   `json:"jitter_ms"`
+	Latencies   []time.Duration `json:"-"`
+	SuccessRate float64         `json:"success_rate"`
 }
 
 type LatencyTester struct {
@@ -61,21 +85,33 @@ type LatencyTester struct {
 	dnsProtocol string // "udp", "tcp", "dot", "doh"
 	dnsQuery    string // domain to query
 	compareMode bool
+	jsonOutput  bool
 	results4    []PingResult
 	results6    []PingResult
 	mu          sync.Mutex
 }
 
 type ComparisonResult struct {
-	TCPv4Stats   Statistics
-	TCPv6Stats   Statistics
-	UDPv4Stats   Statistics
-	UDPv6Stats   Statistics
-	IPv4Score    float64
-	IPv6Score    float64
-	Winner       string
-	ResolvedIPv4 string
-	ResolvedIPv6 string
+	TCPv4Stats   Statistics `json:"tcp_v4_stats,omitempty"`
+	TCPv6Stats   Statistics `json:"tcp_v6_stats,omitempty"`
+	UDPv4Stats   Statistics `json:"udp_v4_stats,omitempty"`
+	UDPv6Stats   Statistics `json:"udp_v6_stats,omitempty"`
+	DNSv4Stats   Statistics `json:"dns_v4_stats,omitempty"`
+	DNSv6Stats   Statistics `json:"dns_v6_stats,omitempty"`
+	HTTPv4Stats  Statistics `json:"http_v4_stats,omitempty"`
+	HTTPv6Stats  Statistics `json:"http_v6_stats,omitempty"`
+	ICMPv4Stats  Statistics `json:"icmp_v4_stats,omitempty"`
+	ICMPv6Stats  Statistics `json:"icmp_v6_stats,omitempty"`
+	IPv4Score    float64    `json:"ipv4_score"`
+	IPv6Score    float64    `json:"ipv6_score"`
+	Winner       string     `json:"winner"`
+	ResolvedIPv4 string     `json:"resolved_ipv4"`
+	ResolvedIPv6 string     `json:"resolved_ipv6"`
+	Protocol     string     `json:"protocol"`
+	Hostname     string     `json:"hostname"`
+	Port         int        `json:"port"`
+	DNSQuery     string     `json:"dns_query,omitempty"`
+	Timestamp    time.Time  `json:"timestamp"`
 }
 
 // DNS query structures
@@ -107,7 +143,7 @@ func main() {
 	var (
 		target4     = flag.String("4", "8.8.8.8", "IPv4 target address (auto-enables IPv4-only if custom)")
 		target6     = flag.String("6", "2001:4860:4860::8888", "IPv6 target address (auto-enables IPv6-only if custom)")
-		hostname    = flag.String("compare", "", "Compare mode: resolve hostname and test both TCP/UDP on IPv4/IPv6")
+		hostname    = flag.String("compare", "", "Compare mode: resolve hostname and test protocols on both IPv4/IPv6 (TCP/UDP by default, or use -icmp, -http, -dns for specific protocol)")
 		port        = flag.Int("p", 53, "Port to test (for TCP/UDP/HTTP/DNS modes)")
 		count       = flag.Int("c", 10, "Number of tests to perform")
 		interval    = flag.Duration("i", time.Second, "Interval between tests")
@@ -116,13 +152,14 @@ func main() {
 		ipv4Only    = flag.Bool("4only", false, "Test IPv4 only")
 		ipv6Only    = flag.Bool("6only", false, "Test IPv6 only")
 		verbose     = flag.Bool("v", false, "Verbose output")
-		tcpMode     = flag.Bool("t", false, "Use TCP connect test")
+		tcpMode     = flag.Bool("t", false, "Use TCP connect test (default mode)")
 		udpMode     = flag.Bool("u", false, "Use UDP test")
-		icmpMode    = flag.Bool("icmp", false, "Use ICMP ping test (may require root on some systems)")
-		httpMode    = flag.Bool("http", false, "Use HTTP/HTTPS timing test")
-		dnsMode     = flag.Bool("dns", false, "Use DNS query testing")
+		icmpMode    = flag.Bool("icmp", false, "Use ICMP ping test (auto-fallback to TCP if no root permissions)")
+		httpMode    = flag.Bool("http", false, "Use HTTP/HTTPS HEAD request timing test (HTTPS on ports 443/8443)")
+		dnsMode     = flag.Bool("dns", false, "Use DNS query testing (supports UDP, TCP, DoT, DoH protocols)")
 		dnsProtocol = flag.String("dns-protocol", "udp", "DNS protocol: udp, tcp, dot, doh")
 		dnsQuery    = flag.String("dns-query", "dns-query.qosbox.com", "Domain name to query for DNS testing")
+		jsonOutput  = flag.Bool("json", false, "Output results in JSON format instead of human-readable text")
 	)
 	flag.Parse()
 
@@ -159,15 +196,22 @@ func main() {
 		log.Fatal("Cannot specify multiple protocol flags (-t, -u, -icmp, -http, -dns) simultaneously")
 	}
 
-	// If no explicit mode is set, default to TCP
-	if modeCount == 0 {
+	compareMode := *hostname != ""
+
+	// If no explicit mode is set, default to TCP (unless in compare mode which handles its own defaults)
+	if modeCount == 0 && !compareMode {
 		*tcpMode = true
 		modeCount = 1
 	}
 
-	compareMode := *hostname != ""
-	if compareMode && (*tcpMode || *udpMode || *icmpMode || *httpMode || *dnsMode) {
-		log.Fatal("Compare mode cannot be used with protocol flags (compare mode tests both TCP and UDP)")
+	if compareMode && (*tcpMode || *udpMode) {
+		log.Fatal("Compare mode cannot be used with -t or -u flags (compare mode tests TCP/UDP by default, or use -icmp, -http, or -dns for specific protocol comparison)")
+	}
+
+	// Special handling for DNS compare mode
+	if compareMode && *dnsMode {
+		// DNS compare mode: test the specified DNS protocol across IPv4/IPv6
+		// This is allowed and will test the same DNS protocol on both IP versions
 	}
 
 	// Auto-enable single protocol mode when custom targets are specified
@@ -204,6 +248,7 @@ func main() {
 		dnsProtocol: *dnsProtocol,
 		dnsQuery:    *dnsQuery,
 		compareMode: compareMode,
+		jsonOutput:  *jsonOutput,
 	}
 
 	if compareMode {
@@ -249,7 +294,11 @@ func main() {
 			tester.testIPv4()
 		}
 
-		tester.printResults()
+		if tester.jsonOutput {
+			tester.printJSONResults()
+		} else {
+			tester.printResults()
+		}
 	}
 }
 
@@ -1230,6 +1279,19 @@ func (lt *LatencyTester) resolveHostname(hostname string) (ipv4, ipv6 string, er
 }
 
 func (lt *LatencyTester) runCompareMode() {
+	if lt.dnsMode {
+		lt.runDNSCompareMode()
+		return
+	}
+	if lt.icmpMode {
+		lt.runICMPCompareMode()
+		return
+	}
+	if lt.httpMode {
+		lt.runHTTPCompareMode()
+		return
+	}
+
 	fmt.Printf("High-Fidelity IPv4/IPv6 Comparison Mode\n")
 	fmt.Printf("=======================================\n\n")
 
@@ -1269,6 +1331,7 @@ func (lt *LatencyTester) runCompareMode() {
 	lt.target6 = ipv6
 	lt.tcpMode = true
 	lt.udpMode = false
+	lt.dnsMode = false
 	lt.testIPv6()
 	result.TCPv6Stats = lt.calculateStats(lt.results6)
 
@@ -1299,7 +1362,180 @@ func (lt *LatencyTester) runCompareMode() {
 
 	// Calculate scores and determine winner
 	lt.calculateComparisonScores(result)
-	lt.printComparisonResults(result)
+	result.Protocol = "TCP/UDP"
+	result.Hostname = lt.hostname
+	result.Port = lt.port
+	result.Timestamp = time.Now()
+
+	if lt.jsonOutput {
+		lt.printJSONComparisonResults(result)
+	} else {
+		lt.printComparisonResults(result)
+	}
+}
+
+func (lt *LatencyTester) runDNSCompareMode() {
+	fmt.Printf("High-Fidelity IPv4/IPv6 DNS Comparison Mode (%s)\n", strings.ToUpper(lt.dnsProtocol))
+	fmt.Printf("================================================\n\n")
+
+	fmt.Printf("Resolving %s...\n", lt.hostname)
+	ipv4, ipv6, err := lt.resolveHostname(lt.hostname)
+	if err != nil {
+		log.Fatalf("Error resolving hostname: %v", err)
+	}
+
+	fmt.Printf("Resolved DNS servers:\n")
+	if ipv4 != "" {
+		fmt.Printf("  IPv4 (A): %s\n", ipv4)
+	}
+	if ipv6 != "" {
+		fmt.Printf("  IPv6 (AAAA): %s\n", ipv6)
+	}
+	fmt.Printf("\n")
+
+	if ipv4 == "" {
+		log.Fatal("No IPv4 address found - cannot perform DNS comparison")
+	}
+	if ipv6 == "" {
+		log.Fatal("No IPv6 address found - cannot perform DNS comparison")
+	}
+
+	// Override count to 10 for comparison mode
+	originalCount := lt.count
+	lt.count = 10
+
+	// Store original mode states
+	originalTcpMode := lt.tcpMode
+	originalUdpMode := lt.udpMode
+
+	// Set DNS mode for both tests
+	lt.tcpMode = false
+	lt.udpMode = false
+
+	// Test DNS IPv6
+	fmt.Printf("Testing DNS %s IPv6 ([%s]:%d) querying %s...\n", strings.ToUpper(lt.dnsProtocol), ipv6, lt.port, lt.dnsQuery)
+	lt.target6 = ipv6
+	lt.testIPv6()
+	dnsv6Stats := lt.calculateStats(lt.results6)
+
+	// Reset results and test DNS IPv4
+	lt.results6 = nil
+
+	// Test DNS IPv4
+	fmt.Printf("Testing DNS %s IPv4 (%s:%d) querying %s...\n", strings.ToUpper(lt.dnsProtocol), ipv4, lt.port, lt.dnsQuery)
+	lt.target4 = ipv4
+	lt.testIPv4()
+	dnsv4Stats := lt.calculateStats(lt.results4)
+
+	// Restore original settings
+	lt.count = originalCount
+	lt.tcpMode = originalTcpMode
+	lt.udpMode = originalUdpMode
+
+	// Create comparison result for JSON output
+	result := &ComparisonResult{
+		DNSv4Stats:   dnsv4Stats,
+		DNSv6Stats:   dnsv6Stats,
+		ResolvedIPv4: ipv4,
+		ResolvedIPv6: ipv6,
+		Protocol:     fmt.Sprintf("DNS-%s", strings.ToUpper(lt.dnsProtocol)),
+		Hostname:     lt.hostname,
+		Port:         lt.port,
+		DNSQuery:     lt.dnsQuery,
+		Timestamp:    time.Now(),
+	}
+
+	// Calculate DNS comparison scores
+	lt.calculateDNSComparisonScores(result)
+
+	// Print DNS comparison results
+	if lt.jsonOutput {
+		lt.printJSONComparisonResults(result)
+	} else {
+		lt.printDNSComparisonResults(dnsv4Stats, dnsv6Stats, ipv4, ipv6)
+	}
+}
+
+func (lt *LatencyTester) printDNSComparisonResults(ipv4Stats, ipv6Stats Statistics, ipv4Addr, ipv6Addr string) {
+	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Printf("DNS %s COMPARISON RESULTS\n", strings.ToUpper(lt.dnsProtocol))
+	fmt.Printf(strings.Repeat("=", 60) + "\n\n")
+
+	// IPv6 Results
+	fmt.Printf("IPv6 DNS Results ([%s]:%d)\n", ipv6Addr, lt.port)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if ipv6Stats.Received > 0 {
+		successRate := float64(ipv6Stats.Received) / float64(ipv6Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, ipv6Stats.Received, ipv6Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(ipv6Stats.Avg.Nanoseconds())/1e6,
+			float64(ipv6Stats.Min.Nanoseconds())/1e6,
+			float64(ipv6Stats.Max.Nanoseconds())/1e6,
+			float64(ipv6Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(ipv6Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful DNS queries\n")
+	}
+	fmt.Printf("\n")
+
+	// IPv4 Results
+	fmt.Printf("IPv4 DNS Results (%s:%d)\n", ipv4Addr, lt.port)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if ipv4Stats.Received > 0 {
+		successRate := float64(ipv4Stats.Received) / float64(ipv4Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, ipv4Stats.Received, ipv4Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(ipv4Stats.Avg.Nanoseconds())/1e6,
+			float64(ipv4Stats.Min.Nanoseconds())/1e6,
+			float64(ipv4Stats.Max.Nanoseconds())/1e6,
+			float64(ipv4Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(ipv4Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful DNS queries\n")
+	}
+	fmt.Printf("\n")
+
+	// Comparison
+	fmt.Printf("DNS Performance Comparison\n")
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+
+	if ipv4Stats.Received > 0 && ipv6Stats.Received > 0 {
+		diff := float64(ipv4Stats.Avg.Nanoseconds()-ipv6Stats.Avg.Nanoseconds()) / 1e6
+		faster := "IPv6"
+		if diff < 0 {
+			faster = "IPv4"
+			diff = -diff
+		}
+		fmt.Printf("Average latency difference: %.3fms (%s is faster)\n", diff, faster)
+
+		success6 := float64(ipv6Stats.Received) / float64(ipv6Stats.Sent) * 100
+		success4 := float64(ipv4Stats.Received) / float64(ipv4Stats.Sent) * 100
+		fmt.Printf("Success rate: IPv6=%.1f%% IPv4=%.1f%%\n", success6, success4)
+
+		// Simple scoring for DNS
+		ipv6Score := success6 * (1000 / (float64(ipv6Stats.Avg.Nanoseconds()) / 1e6))
+		ipv4Score := success4 * (1000 / (float64(ipv4Stats.Avg.Nanoseconds()) / 1e6))
+
+		fmt.Printf("\nPerformance Scores:\n")
+		fmt.Printf("IPv6: %.2f\n", ipv6Score)
+		fmt.Printf("IPv4: %.2f\n", ipv4Score)
+
+		if ipv6Score > ipv4Score {
+			percent := ((ipv6Score - ipv4Score) / ipv4Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv6 (%.1f%% better)\n", percent)
+		} else if ipv4Score > ipv6Score {
+			percent := ((ipv4Score - ipv6Score) / ipv6Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv4 (%.1f%% better)\n", percent)
+		} else {
+			fmt.Printf("\n🏆 Winner: Tie\n")
+		}
+	} else {
+		fmt.Printf("Cannot compare: One or both protocols failed completely\n")
+	}
+
+	fmt.Printf("\nQuery: %s\n", lt.dnsQuery)
+	fmt.Printf("Protocol: %s\n", strings.ToUpper(lt.dnsProtocol))
+	fmt.Printf("Scoring: Based on success rate and latency (higher success + lower latency = higher score)\n\n")
 }
 
 func (lt *LatencyTester) calculateComparisonScores(result *ComparisonResult) {
@@ -1566,4 +1802,533 @@ func (lt *LatencyTester) printComparison() {
 		}
 	}
 	fmt.Printf("\n")
+}
+
+func (lt *LatencyTester) calculateDNSComparisonScores(result *ComparisonResult) {
+	// Simple scoring for DNS based on success rate and latency
+	ipv4Score := 0.0
+	ipv6Score := 0.0
+
+	if result.DNSv4Stats.Received > 0 {
+		success4 := float64(result.DNSv4Stats.Received) / float64(result.DNSv4Stats.Sent) * 100
+		ipv4Score = success4 * (1000 / (float64(result.DNSv4Stats.Avg.Nanoseconds()) / 1e6))
+	}
+
+	if result.DNSv6Stats.Received > 0 {
+		success6 := float64(result.DNSv6Stats.Received) / float64(result.DNSv6Stats.Sent) * 100
+		ipv6Score = success6 * (1000 / (float64(result.DNSv6Stats.Avg.Nanoseconds()) / 1e6))
+	}
+
+	result.IPv4Score = ipv4Score
+	result.IPv6Score = ipv6Score
+
+	if ipv4Score > ipv6Score {
+		result.Winner = "IPv4"
+	} else if ipv6Score > ipv4Score {
+		result.Winner = "IPv6"
+	} else {
+		result.Winner = "Tie"
+	}
+}
+
+func (lt *LatencyTester) printJSONResults() {
+	protocol := "TCP"
+	if lt.udpMode {
+		protocol = "UDP"
+	} else if lt.icmpMode {
+		protocol = "ICMP"
+	} else if lt.httpMode {
+		protocol = "HTTP/HTTPS"
+	} else if lt.dnsMode {
+		protocol = fmt.Sprintf("DNS-%s", strings.ToUpper(lt.dnsProtocol))
+	}
+
+	output := JSONOutput{
+		Mode:     "single",
+		Protocol: protocol,
+		Targets: map[string]string{
+			"ipv4": lt.target4,
+			"ipv6": lt.target6,
+		},
+		TestConfig: TestConfig{
+			Count:       lt.count,
+			Interval:    lt.interval,
+			Timeout:     lt.timeout,
+			Port:        lt.port,
+			Size:        lt.size,
+			DNSQuery:    lt.dnsQuery,
+			DNSProtocol: lt.dnsProtocol,
+			Verbose:     lt.verbose,
+		},
+		Timestamp: time.Now(),
+	}
+
+	if !lt.ipv6Only && len(lt.results4) > 0 {
+		stats4 := lt.calculateStats(lt.results4)
+		stats4.SuccessRate = float64(stats4.Received) / float64(stats4.Sent) * 100
+		output.IPv4Results = stats4
+	}
+
+	if !lt.ipv4Only && len(lt.results6) > 0 {
+		stats6 := lt.calculateStats(lt.results6)
+		stats6.SuccessRate = float64(stats6.Received) / float64(stats6.Sent) * 100
+		output.IPv6Results = stats6
+	}
+
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		fmt.Printf("Error marshaling JSON: %v\n", err)
+		return
+	}
+
+	fmt.Println(string(jsonData))
+}
+
+func (lt *LatencyTester) printJSONComparisonResults(result *ComparisonResult) {
+	protocol := result.Protocol
+	if result.DNSQuery != "" {
+		protocol = fmt.Sprintf("DNS-%s", strings.ToUpper(lt.dnsProtocol))
+	}
+
+	output := JSONOutput{
+		Mode:     "compare",
+		Protocol: protocol,
+		Targets: map[string]string{
+			"hostname": lt.hostname,
+			"ipv4":     result.ResolvedIPv4,
+			"ipv6":     result.ResolvedIPv6,
+		},
+		Comparison: result,
+		TestConfig: TestConfig{
+			Count:       lt.count,
+			Interval:    lt.interval,
+			Timeout:     lt.timeout,
+			Port:        lt.port,
+			Size:        lt.size,
+			DNSQuery:    lt.dnsQuery,
+			DNSProtocol: lt.dnsProtocol,
+			Verbose:     lt.verbose,
+		},
+		Timestamp: time.Now(),
+	}
+
+	// Calculate success rates for comparison results
+	if result.TCPv4Stats.Sent > 0 {
+		result.TCPv4Stats.SuccessRate = float64(result.TCPv4Stats.Received) / float64(result.TCPv4Stats.Sent) * 100
+	}
+	if result.TCPv6Stats.Sent > 0 {
+		result.TCPv6Stats.SuccessRate = float64(result.TCPv6Stats.Received) / float64(result.TCPv6Stats.Sent) * 100
+	}
+	if result.UDPv4Stats.Sent > 0 {
+		result.UDPv4Stats.SuccessRate = float64(result.UDPv4Stats.Received) / float64(result.UDPv4Stats.Sent) * 100
+	}
+	if result.UDPv6Stats.Sent > 0 {
+		result.UDPv6Stats.SuccessRate = float64(result.UDPv6Stats.Received) / float64(result.UDPv6Stats.Sent) * 100
+	}
+	if result.DNSv4Stats.Sent > 0 {
+		result.DNSv4Stats.SuccessRate = float64(result.DNSv4Stats.Received) / float64(result.DNSv4Stats.Sent) * 100
+	}
+	if result.DNSv6Stats.Sent > 0 {
+		result.DNSv6Stats.SuccessRate = float64(result.DNSv6Stats.Received) / float64(result.DNSv6Stats.Sent) * 100
+	}
+	if result.HTTPv4Stats.Sent > 0 {
+		result.HTTPv4Stats.SuccessRate = float64(result.HTTPv4Stats.Received) / float64(result.HTTPv4Stats.Sent) * 100
+	}
+	if result.HTTPv6Stats.Sent > 0 {
+		result.HTTPv6Stats.SuccessRate = float64(result.HTTPv6Stats.Received) / float64(result.HTTPv6Stats.Sent) * 100
+	}
+	if result.ICMPv4Stats.Sent > 0 {
+		result.ICMPv4Stats.SuccessRate = float64(result.ICMPv4Stats.Received) / float64(result.ICMPv4Stats.Sent) * 100
+	}
+	if result.ICMPv6Stats.Sent > 0 {
+		result.ICMPv6Stats.SuccessRate = float64(result.ICMPv6Stats.Received) / float64(result.ICMPv6Stats.Sent) * 100
+	}
+
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		fmt.Printf("Error marshaling JSON: %v\n", err)
+		return
+	}
+
+	fmt.Println(string(jsonData))
+}
+
+func (lt *LatencyTester) runICMPCompareMode() {
+	fmt.Printf("High-Fidelity IPv4/IPv6 ICMP Comparison Mode\n")
+	fmt.Printf("==========================================\n\n")
+
+	fmt.Printf("Resolving %s...\n", lt.hostname)
+	ipv4, ipv6, err := lt.resolveHostname(lt.hostname)
+	if err != nil {
+		log.Fatalf("Error resolving hostname: %v", err)
+	}
+
+	fmt.Printf("Resolved addresses:\n")
+	if ipv4 != "" {
+		fmt.Printf("  IPv4 (A): %s\n", ipv4)
+	}
+	if ipv6 != "" {
+		fmt.Printf("  IPv6 (AAAA): %s\n", ipv6)
+	}
+	fmt.Printf("\n")
+
+	if ipv4 == "" {
+		log.Fatal("No IPv4 address found - cannot perform comparison")
+	}
+	if ipv6 == "" {
+		log.Fatal("No IPv6 address found - cannot perform comparison")
+	}
+
+	// Override count to 10 for comparison mode
+	originalCount := lt.count
+	lt.count = 10
+
+	result := &ComparisonResult{
+		ResolvedIPv4: ipv4,
+		ResolvedIPv6: ipv6,
+		Protocol:     "ICMP",
+		Hostname:     lt.hostname,
+		Port:         0, // ICMP doesn't use ports
+		Timestamp:    time.Now(),
+	}
+
+	// Store original mode states
+	originalTcpMode := lt.tcpMode
+	originalUdpMode := lt.udpMode
+	originalDnsMode := lt.dnsMode
+
+	// Set ICMP mode for both tests
+	lt.tcpMode = false
+	lt.udpMode = false
+	lt.dnsMode = false
+
+	// Test ICMP IPv6
+	fmt.Printf("Testing ICMP IPv6 (%s)...\n", ipv6)
+	lt.target6 = ipv6
+	lt.testIPv6()
+	result.ICMPv6Stats = lt.calculateStats(lt.results6)
+
+	// Reset results and test ICMP IPv4
+	lt.results6 = nil
+
+	// Test ICMP IPv4
+	fmt.Printf("Testing ICMP IPv4 (%s)...\n", ipv4)
+	lt.target4 = ipv4
+	lt.testIPv4()
+	result.ICMPv4Stats = lt.calculateStats(lt.results4)
+
+	// Restore original settings
+	lt.count = originalCount
+	lt.tcpMode = originalTcpMode
+	lt.udpMode = originalUdpMode
+	lt.dnsMode = originalDnsMode
+
+	// Calculate comparison scores
+	lt.calculateICMPComparisonScores(result)
+
+	// Print results
+	if lt.jsonOutput {
+		lt.printJSONComparisonResults(result)
+	} else {
+		lt.printICMPComparisonResults(result)
+	}
+}
+
+func (lt *LatencyTester) runHTTPCompareMode() {
+	fmt.Printf("High-Fidelity IPv4/IPv6 HTTP Comparison Mode\n")
+	fmt.Printf("==========================================\n\n")
+
+	fmt.Printf("Resolving %s...\n", lt.hostname)
+	ipv4, ipv6, err := lt.resolveHostname(lt.hostname)
+	if err != nil {
+		log.Fatalf("Error resolving hostname: %v", err)
+	}
+
+	fmt.Printf("Resolved addresses:\n")
+	if ipv4 != "" {
+		fmt.Printf("  IPv4 (A): %s\n", ipv4)
+	}
+	if ipv6 != "" {
+		fmt.Printf("  IPv6 (AAAA): %s\n", ipv6)
+	}
+	fmt.Printf("\n")
+
+	if ipv4 == "" {
+		log.Fatal("No IPv4 address found - cannot perform comparison")
+	}
+	if ipv6 == "" {
+		log.Fatal("No IPv6 address found - cannot perform comparison")
+	}
+
+	// Override count to 10 for comparison mode
+	originalCount := lt.count
+	lt.count = 10
+
+	result := &ComparisonResult{
+		ResolvedIPv4: ipv4,
+		ResolvedIPv6: ipv6,
+		Protocol:     "HTTP/HTTPS",
+		Hostname:     lt.hostname,
+		Port:         lt.port,
+		Timestamp:    time.Now(),
+	}
+
+	// Store original mode states
+	originalTcpMode := lt.tcpMode
+	originalUdpMode := lt.udpMode
+	originalIcmpMode := lt.icmpMode
+	originalDnsMode := lt.dnsMode
+
+	// Set HTTP mode for both tests
+	lt.tcpMode = false
+	lt.udpMode = false
+	lt.icmpMode = false
+	lt.dnsMode = false
+
+	// Test HTTP IPv6
+	fmt.Printf("Testing HTTP IPv6 ([%s]:%d)...\n", ipv6, lt.port)
+	lt.target6 = ipv6
+	lt.testIPv6()
+	result.HTTPv6Stats = lt.calculateStats(lt.results6)
+
+	// Reset results and test HTTP IPv4
+	lt.results6 = nil
+
+	// Test HTTP IPv4
+	fmt.Printf("Testing HTTP IPv4 (%s:%d)...\n", ipv4, lt.port)
+	lt.target4 = ipv4
+	lt.testIPv4()
+	result.HTTPv4Stats = lt.calculateStats(lt.results4)
+
+	// Restore original settings
+	lt.count = originalCount
+	lt.tcpMode = originalTcpMode
+	lt.udpMode = originalUdpMode
+	lt.icmpMode = originalIcmpMode
+	lt.dnsMode = originalDnsMode
+
+	// Calculate comparison scores
+	lt.calculateHTTPComparisonScores(result)
+
+	// Print results
+	if lt.jsonOutput {
+		lt.printJSONComparisonResults(result)
+	} else {
+		lt.printHTTPComparisonResults(result)
+	}
+}
+
+func (lt *LatencyTester) calculateICMPComparisonScores(result *ComparisonResult) {
+	// Score calculation for ICMP: lower latency and higher success rate are better
+	ipv4Score := 0.0
+	ipv6Score := 0.0
+
+	if result.ICMPv4Stats.Received > 0 {
+		successRate := float64(result.ICMPv4Stats.Received) / float64(result.ICMPv4Stats.Sent)
+		avgLatencyMs := float64(result.ICMPv4Stats.Avg.Nanoseconds()) / 1e6
+		ipv4Score = successRate * (1000 / avgLatencyMs)
+	}
+
+	if result.ICMPv6Stats.Received > 0 {
+		successRate := float64(result.ICMPv6Stats.Received) / float64(result.ICMPv6Stats.Sent)
+		avgLatencyMs := float64(result.ICMPv6Stats.Avg.Nanoseconds()) / 1e6
+		ipv6Score = successRate * (1000 / avgLatencyMs)
+	}
+
+	result.IPv4Score = ipv4Score
+	result.IPv6Score = ipv6Score
+
+	if ipv4Score > ipv6Score {
+		result.Winner = "IPv4"
+	} else if ipv6Score > ipv4Score {
+		result.Winner = "IPv6"
+	} else {
+		result.Winner = "Tie"
+	}
+}
+
+func (lt *LatencyTester) calculateHTTPComparisonScores(result *ComparisonResult) {
+	// Score calculation for HTTP: lower latency and higher success rate are better
+	ipv4Score := 0.0
+	ipv6Score := 0.0
+
+	if result.HTTPv4Stats.Received > 0 {
+		successRate := float64(result.HTTPv4Stats.Received) / float64(result.HTTPv4Stats.Sent)
+		avgLatencyMs := float64(result.HTTPv4Stats.Avg.Nanoseconds()) / 1e6
+		ipv4Score = successRate * (1000 / avgLatencyMs)
+	}
+
+	if result.HTTPv6Stats.Received > 0 {
+		successRate := float64(result.HTTPv6Stats.Received) / float64(result.HTTPv6Stats.Sent)
+		avgLatencyMs := float64(result.HTTPv6Stats.Avg.Nanoseconds()) / 1e6
+		ipv6Score = successRate * (1000 / avgLatencyMs)
+	}
+
+	result.IPv4Score = ipv4Score
+	result.IPv6Score = ipv6Score
+
+	if ipv4Score > ipv6Score {
+		result.Winner = "IPv4"
+	} else if ipv6Score > ipv4Score {
+		result.Winner = "IPv6"
+	} else {
+		result.Winner = "Tie"
+	}
+}
+
+func (lt *LatencyTester) printICMPComparisonResults(result *ComparisonResult) {
+	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Printf("ICMP COMPARISON RESULTS\n")
+	fmt.Printf(strings.Repeat("=", 60) + "\n\n")
+
+	// IPv6 Results
+	fmt.Printf("IPv6 ICMP Results (%s)\n", result.ResolvedIPv6)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if result.ICMPv6Stats.Received > 0 {
+		successRate := float64(result.ICMPv6Stats.Received) / float64(result.ICMPv6Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, result.ICMPv6Stats.Received, result.ICMPv6Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(result.ICMPv6Stats.Avg.Nanoseconds())/1e6,
+			float64(result.ICMPv6Stats.Min.Nanoseconds())/1e6,
+			float64(result.ICMPv6Stats.Max.Nanoseconds())/1e6,
+			float64(result.ICMPv6Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(result.ICMPv6Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful ICMP packets\n")
+	}
+	fmt.Printf("\n")
+
+	// IPv4 Results
+	fmt.Printf("IPv4 ICMP Results (%s)\n", result.ResolvedIPv4)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if result.ICMPv4Stats.Received > 0 {
+		successRate := float64(result.ICMPv4Stats.Received) / float64(result.ICMPv4Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, result.ICMPv4Stats.Received, result.ICMPv4Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(result.ICMPv4Stats.Avg.Nanoseconds())/1e6,
+			float64(result.ICMPv4Stats.Min.Nanoseconds())/1e6,
+			float64(result.ICMPv4Stats.Max.Nanoseconds())/1e6,
+			float64(result.ICMPv4Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(result.ICMPv4Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful ICMP packets\n")
+	}
+	fmt.Printf("\n")
+
+	// Comparison
+	fmt.Printf("ICMP Performance Comparison\n")
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+
+	if result.ICMPv4Stats.Received > 0 && result.ICMPv6Stats.Received > 0 {
+		diff := float64(result.ICMPv4Stats.Avg.Nanoseconds()-result.ICMPv6Stats.Avg.Nanoseconds()) / 1e6
+		faster := "IPv6"
+		if diff < 0 {
+			faster = "IPv4"
+			diff = -diff
+		}
+		fmt.Printf("Average latency difference: %.3fms (%s is faster)\n", diff, faster)
+
+		success6 := float64(result.ICMPv6Stats.Received) / float64(result.ICMPv6Stats.Sent) * 100
+		success4 := float64(result.ICMPv4Stats.Received) / float64(result.ICMPv4Stats.Sent) * 100
+		fmt.Printf("Success rate: IPv6=%.1f%% IPv4=%.1f%%\n", success6, success4)
+
+		fmt.Printf("\nPerformance Scores:\n")
+		fmt.Printf("IPv6: %.2f\n", result.IPv6Score)
+		fmt.Printf("IPv4: %.2f\n", result.IPv4Score)
+
+		if result.IPv6Score > result.IPv4Score {
+			percent := ((result.IPv6Score - result.IPv4Score) / result.IPv4Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv6 (%.1f%% better)\n", percent)
+		} else if result.IPv4Score > result.IPv6Score {
+			percent := ((result.IPv4Score - result.IPv6Score) / result.IPv6Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv4 (%.1f%% better)\n", percent)
+		} else {
+			fmt.Printf("\n🏆 Winner: Tie\n")
+		}
+	} else {
+		fmt.Printf("Cannot compare: One or both protocols failed completely\n")
+	}
+
+	fmt.Printf("\nScoring: Based on success rate and latency (higher success + lower latency = higher score)\n\n")
+}
+
+func (lt *LatencyTester) printHTTPComparisonResults(result *ComparisonResult) {
+	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Printf("HTTP/HTTPS COMPARISON RESULTS\n")
+	fmt.Printf(strings.Repeat("=", 60) + "\n\n")
+
+	scheme := "HTTP"
+	if lt.port == 443 || lt.port == 8443 {
+		scheme = "HTTPS"
+	}
+
+	// IPv6 Results
+	fmt.Printf("IPv6 %s Results ([%s]:%d)\n", scheme, result.ResolvedIPv6, lt.port)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if result.HTTPv6Stats.Received > 0 {
+		successRate := float64(result.HTTPv6Stats.Received) / float64(result.HTTPv6Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, result.HTTPv6Stats.Received, result.HTTPv6Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(result.HTTPv6Stats.Avg.Nanoseconds())/1e6,
+			float64(result.HTTPv6Stats.Min.Nanoseconds())/1e6,
+			float64(result.HTTPv6Stats.Max.Nanoseconds())/1e6,
+			float64(result.HTTPv6Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(result.HTTPv6Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful HTTP requests\n")
+	}
+	fmt.Printf("\n")
+
+	// IPv4 Results
+	fmt.Printf("IPv4 %s Results (%s:%d)\n", scheme, result.ResolvedIPv4, lt.port)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+	if result.HTTPv4Stats.Received > 0 {
+		successRate := float64(result.HTTPv4Stats.Received) / float64(result.HTTPv4Stats.Sent) * 100
+		fmt.Printf("Success: %.1f%% (%d/%d)\n", successRate, result.HTTPv4Stats.Received, result.HTTPv4Stats.Sent)
+		fmt.Printf("Latency: avg=%.3fms min=%.3fms max=%.3fms stddev=%.3fms\n",
+			float64(result.HTTPv4Stats.Avg.Nanoseconds())/1e6,
+			float64(result.HTTPv4Stats.Min.Nanoseconds())/1e6,
+			float64(result.HTTPv4Stats.Max.Nanoseconds())/1e6,
+			float64(result.HTTPv4Stats.StdDev.Nanoseconds())/1e6)
+		fmt.Printf("Jitter: %.3fms\n", float64(result.HTTPv4Stats.Jitter.Nanoseconds())/1e6)
+	} else {
+		fmt.Printf("Failed: No successful HTTP requests\n")
+	}
+	fmt.Printf("\n")
+
+	// Comparison
+	fmt.Printf("%s Performance Comparison\n", scheme)
+	fmt.Printf(strings.Repeat("-", 40) + "\n")
+
+	if result.HTTPv4Stats.Received > 0 && result.HTTPv6Stats.Received > 0 {
+		diff := float64(result.HTTPv4Stats.Avg.Nanoseconds()-result.HTTPv6Stats.Avg.Nanoseconds()) / 1e6
+		faster := "IPv6"
+		if diff < 0 {
+			faster = "IPv4"
+			diff = -diff
+		}
+		fmt.Printf("Average latency difference: %.3fms (%s is faster)\n", diff, faster)
+
+		success6 := float64(result.HTTPv6Stats.Received) / float64(result.HTTPv6Stats.Sent) * 100
+		success4 := float64(result.HTTPv4Stats.Received) / float64(result.HTTPv4Stats.Sent) * 100
+		fmt.Printf("Success rate: IPv6=%.1f%% IPv4=%.1f%%\n", success6, success4)
+
+		fmt.Printf("\nPerformance Scores:\n")
+		fmt.Printf("IPv6: %.2f\n", result.IPv6Score)
+		fmt.Printf("IPv4: %.2f\n", result.IPv4Score)
+
+		if result.IPv6Score > result.IPv4Score {
+			percent := ((result.IPv6Score - result.IPv4Score) / result.IPv4Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv6 (%.1f%% better)\n", percent)
+		} else if result.IPv4Score > result.IPv6Score {
+			percent := ((result.IPv4Score - result.IPv6Score) / result.IPv6Score) * 100
+			fmt.Printf("\n🏆 Winner: IPv4 (%.1f%% better)\n", percent)
+		} else {
+			fmt.Printf("\n🏆 Winner: Tie\n")
+		}
+	} else {
+		fmt.Printf("Cannot compare: One or both protocols failed completely\n")
+	}
+
+	fmt.Printf("\nScoring: Based on success rate and latency (higher success + lower latency = higher score)\n\n")
 }

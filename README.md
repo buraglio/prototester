@@ -8,12 +8,13 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 - **No Root Required**: Defaults to TCP mode, works out-of-the-box for all users
 - **Smart Fallbacks**: Automatically falls back from ICMP to TCP when permissions are insufficient
 - **Linux Optimization**: Uses unprivileged ICMP sockets on Linux when available
-- **Compare Mode**: Automatic hostname resolution and comprehensive IPv4 vs IPv6 performance comparison
+- **Compare Mode**: Automatic hostname resolution and comprehensive IPv4 vs IPv6 performance comparison (supports all protocols)
 - **High-Precision Timing**: Uses nanosecond-precision timing for accurate latency measurements
 - **Comprehensive Statistics**: Provides min/max/avg latency, standard deviation, jitter, and percentiles
 - **Cross-Platform**: Works on Linux, macOS, and other Unix-like systems
 - **IPv4/IPv6 Dual Stack**: Tests both protocols simultaneously or individually
 - **Intelligent Scoring**: Performance ranking system based on success rate and latency
+- **JSON Output**: Machine-readable JSON output for programmatic analysis and automation
 - **Flexible Configuration**: Customizable targets, connection count, intervals, timeouts, and ports
 
 ## Requirements
@@ -118,7 +119,7 @@ sudo ./prototester -icmp
 
 ### Compare Mode (Comprehensive Analysis)
 ```bash
-# Automatically resolve hostname and compare IPv4 vs IPv6 performance
+# Automatically resolve hostname and compare IPv4 vs IPv6 performance (TCP/UDP by default)
 ./prototester -compare google.com
 
 # Compare using HTTPS port
@@ -126,6 +127,24 @@ sudo ./prototester -icmp
 
 # Compare with verbose output
 ./prototester -compare github.com -p 22 -v
+
+# Protocol-specific compare modes
+./prototester -compare google.com -icmp           # ICMP comparison
+./prototester -compare google.com -http -p 80     # HTTP comparison
+./prototester -compare dns.google -dns            # DNS protocol comparison
+./prototester -compare dns.google -dns -dns-protocol dot -p 853  # DoT comparison
+```
+
+### JSON Output
+```bash
+# Get results in JSON format for programmatic processing
+./prototester -json
+
+# JSON with compare mode
+./prototester -compare google.com -json
+
+# JSON with specific protocols
+./prototester -dns -dns-protocol doh -json
 ```
 
 ## Command Line Options
@@ -144,13 +163,17 @@ sudo ./prototester -icmp
 - `-icmp`: Use ICMP ping test (auto-fallback to TCP if no root)
 - `-http`: Use HTTP/HTTPS timing test
 - `-dns`: Use DNS query testing
-- `-compare <hostname>`: Compare mode - test both TCP/UDP on IPv4/IPv6
+- `-compare <hostname>`: Compare mode - test protocols on IPv4/IPv6 (TCP/UDP by default, or use with -icmp/-http/-dns)
 
 ### Protocol-Specific Options
 - `-p <port>`: Port to test (TCP/UDP/HTTP/DNS modes, default: 53)
 - `-s <size>`: Packet size in bytes (ICMP only, default: 64)
 - `-dns-protocol <protocol>`: DNS protocol: udp, tcp, dot, doh (default: udp)
 - `-dns-query <domain>`: Domain name to query for DNS testing (default: dns-query.qosbox.com)
+
+### Output Options
+- `-json`: Output results in JSON format instead of human-readable text
+- `-v`: Verbose output
 
 ### IPv4/IPv6 Options
 - `-4only`: Test IPv4 only
@@ -335,6 +358,109 @@ Average latency difference: 3.180ms (IPv6 is faster)
 Success rate: IPv6=100.0% IPv4=100.0%
 ```
 
+### JSON Output Format
+```json
+{
+  "mode": "single",
+  "protocol": "TCP",
+  "targets": {
+    "ipv4": "8.8.8.8",
+    "ipv6": "2001:4860:4860::8888"
+  },
+  "ipv4_results": {
+    "sent": 10,
+    "received": 10,
+    "lost": 0,
+    "min_ms": 8200417,
+    "max_ms": 9028750,
+    "avg_ms": 8485444,
+    "stddev_ms": 384330,
+    "jitter_ms": 414166,
+    "success_rate": 100.0
+  },
+  "ipv6_results": {
+    "sent": 10,
+    "received": 10,
+    "lost": 0,
+    "min_ms": 12331292,
+    "max_ms": 19593625,
+    "avg_ms": 16687417,
+    "stddev_ms": 3137096,
+    "jitter_ms": 3631166,
+    "success_rate": 100.0
+  },
+  "test_config": {
+    "count": 10,
+    "interval_ms": 1000000000,
+    "timeout_ms": 3000000000,
+    "port": 53,
+    "size": 64,
+    "dns_query": "dns-query.qosbox.com",
+    "dns_protocol": "udp",
+    "verbose": false
+  },
+  "timestamp": "2025-09-29T11:53:09.71829-05:00"
+}
+```
+
+#### JSON Compare Mode Output
+```json
+{
+  "mode": "compare",
+  "protocol": "DNS-UDP",
+  "targets": {
+    "hostname": "dns.google",
+    "ipv4": "8.8.4.4",
+    "ipv6": "2001:4860:4860::8844"
+  },
+  "comparison": {
+    "dns_v4_stats": {
+      "sent": 10,
+      "received": 10,
+      "lost": 0,
+      "min_ms": 8257708,
+      "max_ms": 158996250,
+      "avg_ms": 47095933,
+      "stddev_ms": 45818266,
+      "jitter_ms": 16748726,
+      "success_rate": 100.0
+    },
+    "dns_v6_stats": {
+      "sent": 10,
+      "received": 10,
+      "lost": 0,
+      "min_ms": 17678041,
+      "max_ms": 39847375,
+      "avg_ms": 26857975,
+      "stddev_ms": 8140374,
+      "jitter_ms": 2463259,
+      "success_rate": 100.0
+    },
+    "ipv4_score": 2123.33,
+    "ipv6_score": 3723.29,
+    "winner": "IPv6",
+    "resolved_ipv4": "8.8.4.4",
+    "resolved_ipv6": "2001:4860:4860::8844",
+    "protocol": "DNS-UDP",
+    "hostname": "dns.google",
+    "port": 53,
+    "dns_query": "dns-query.qosbox.com",
+    "timestamp": "2025-09-29T11:53:32.780339-05:00"
+  },
+  "test_config": {
+    "count": 10,
+    "interval_ms": 1000000000,
+    "timeout_ms": 3000000000,
+    "port": 53,
+    "size": 64,
+    "dns_query": "dns-query.qosbox.com",
+    "dns_protocol": "udp",
+    "verbose": false
+  },
+  "timestamp": "2025-09-29T11:53:32.780345-05:00"
+}
+```
+
 ## Technical Details
 
 ### Protocol Implementation
@@ -386,10 +512,15 @@ Success rate: IPv6=100.0% IPv4=100.0%
 
 ### Compare Mode
 - Performs DNS resolution to obtain both A (IPv4) and AAAA (IPv6) records
-- Tests both TCP and UDP protocols automatically (10 tests each by default)
-- Calculates weighted performance scores: TCP 60%, UDP 40%
-- Score formula: (success_rate) × (1000 / avg_latency_ms)
+- **Default Mode**: Tests both TCP and UDP protocols automatically (10 tests each by default)
+- **Protocol-Specific Modes**: Use `-icmp`, `-http`, or `-dns` for focused comparison testing
+- **ICMP Compare**: Compares pure ICMP ping performance between IPv4 and IPv6
+- **HTTP Compare**: Compares HTTP/HTTPS request timing between protocols
+- **DNS Compare**: Tests DNS query performance using specified protocol (UDP/TCP/DoT/DoH)
+- Calculates performance scores: (success_rate) × (1000 / avg_latency_ms)
+- **TCP/UDP Weighting**: TCP 60%, UDP 40% in default compare mode
 - Provides comprehensive ranking and percentage performance difference
+- Supports JSON output for programmatic analysis
 
 ### Statistics
 - Calculates jitter as the average absolute difference between consecutive latencies
@@ -432,14 +563,23 @@ Success rate: IPv6=100.0% IPv4=100.0%
 
 ### Network Analysis
 ```bash
-# Compare protocols for a service
+# Compare protocols for a service (default TCP/UDP)
 ./prototester -compare your-service.com -p 80
+
+# Protocol-specific comparisons
+./prototester -compare google.com -http -p 80      # HTTP performance comparison
+./prototester -compare dns.google -dns             # DNS performance comparison
+./prototester -compare example.com -icmp           # ICMP latency comparison
 
 # IPv6 deployment testing
 ./prototester -6only -6 your-ipv6-server.com
 
 # High-frequency testing
 ./prototester -c 100 -i 100ms -v
+
+# JSON output for automation
+./prototester -compare your-service.com -json > results.json
+./prototester -dns -dns-protocol doh -json | jq '.ipv4_results.avg_ms'
 ```
 
 ## Troubleshooting
