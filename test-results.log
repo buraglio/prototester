@@ -1,0 +1,9 @@
+[2025-09-29 17:35:10] Quick TCP Test (tcp): SUCCESS - Duration: 0.00s
+[2025-09-29 17:35:12] Quick DNS Test (dns): SUCCESS - Duration: 0.00s
+
+=== Test Summary ===
+Total tests: 2
+Successful: 2
+Failed: 0
+Total duration: 0.00s
+Success rate: 100.0%

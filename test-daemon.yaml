@@ -1,0 +1,16 @@
+global:
+  json_output: false
+
+daemon:
+  enabled: true
+  run_interval: "10s"
+  output_file: "daemon-test.log"
+  pid_file: "daemon-test.pid"
+
+tests:
+  - name: "Daemon Test"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    count: 1
+    enabled: true

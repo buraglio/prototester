@@ -1,0 +1,32 @@
+{
+  "test_name": "JSON Test",
+  "timestamp": "2025-09-29T17:36:13.406886-05:00",
+  "test_type": "tcp",
+  "target": "IPv4:8.8.8.8 IPv6:2001:4860:4860::8888",
+  "success": true,
+  "results": {
+    "ipv4_results": {
+      "sent": 1,
+      "received": 1,
+      "lost": 0,
+      "min_ms": 12735292,
+      "max_ms": 12735292,
+      "avg_ms": 12735292,
+      "stddev_ms": 0,
+      "jitter_ms": 0,
+      "success_rate": 100
+    },
+    "ipv6_results": {
+      "sent": 1,
+      "received": 1,
+      "lost": 0,
+      "min_ms": 8144917,
+      "max_ms": 8144917,
+      "avg_ms": 8144917,
+      "stddev_ms": 0,
+      "jitter_ms": 0,
+      "success_rate": 100
+    }
+  },
+  "duration_seconds": 0
+}

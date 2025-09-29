@@ -1,0 +1,68 @@
+# ProtoTester InfluxDB Integration Example
+# Configuration for sending network latency metrics to InfluxDB
+
+global:
+  json_output: true
+  default_count: 10
+  timeout: "5s"
+  interval: "500ms"
+
+  # InfluxDB configuration for time-series storage
+  influxdb:
+    enabled: true
+    url: "http://localhost:8086"
+    token: "your-influxdb-token"           # Replace with your actual InfluxDB token
+    organization: "your-organization"      # Replace with your InfluxDB organization
+    bucket: "network-monitoring"           # Target bucket for network metrics
+    measurement: "network_latency"         # Measurement name in InfluxDB
+    batch_size: 100                       # Number of points to batch before writing
+    flush_interval: "5s"                  # How often to flush batched data
+
+tests:
+  # Multi-protocol monitoring for core infrastructure
+  - name: "Primary DNS TCP"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    port: 53
+    count: 5
+    enabled: true
+
+  - name: "Primary DNS UDP"
+    type: "udp"
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    port: 53
+    count: 5
+    enabled: true
+
+  - name: "DNS Resolution"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    dns_protocol: "udp"
+    dns_query: "example.com"
+    count: 3
+    enabled: true
+
+  - name: "HTTPS Performance"
+    type: "https"
+    target_ipv4: "142.250.191.110"        # google.com
+    port: 443
+    count: 3
+    enabled: true
+
+  - name: "ICMP Ping"
+    type: "icmp"
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    count: 5
+    enabled: true
+
+  # Performance comparison across protocols
+  - name: "Multi-Protocol Comparison"
+    type: "compare"
+    hostname: "cloudflare.com"
+    port: 443
+    count: 5
+    enabled: true

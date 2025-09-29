@@ -1,0 +1,21 @@
+global:
+  output_file: "test-results.log"
+  json_output: false
+  default_count: 2
+
+tests:
+  - name: "Quick TCP Test"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    count: 2
+    enabled: true
+
+  - name: "Quick DNS Test"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    dns_protocol: "udp"
+    dns_query: "google.com"
+    count: 2
+    enabled: true
