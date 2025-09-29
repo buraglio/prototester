@@ -4,7 +4,7 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 
 ## Features
 
-- **Multiple Protocol Support**: TCP, UDP, ICMP, HTTP/HTTPS latency testing
+- **Multiple Protocol Support**: TCP, UDP, ICMP, HTTP/HTTPS, DNS (UDP/TCP/DoT/DoH) latency testing
 - **No Root Required**: Defaults to TCP mode, works out-of-the-box for all users
 - **Smart Fallbacks**: Automatically falls back from ICMP to TCP when permissions are insufficient
 - **Linux Optimization**: Uses unprivileged ICMP sockets on Linux when available
@@ -49,6 +49,27 @@ go build -o prototester main.go
 ## Usage Guide
 
 ### Protocol Selection
+
+#### DNS Query Testing
+```bash
+# DNS UDP queries (default)
+./prototester -dns
+
+# DNS TCP queries
+./prototester -dns -dns-protocol tcp
+
+# DNS over TLS (DoT)
+./prototester -dns -dns-protocol dot -p 853
+
+# DNS over HTTPS (DoH)
+./prototester -dns -dns-protocol doh -p 443
+
+# Custom query domain
+./prototester -dns -dns-query google.com
+
+# Test specific DNS server
+./prototester -dns -4 1.1.1.1 -dns-query dns.qosbox.com
+```
 
 #### TCP Connect Testing (Default - No Root Required)
 ```bash
@@ -122,11 +143,14 @@ sudo ./prototester -icmp
 - `-u`: Use UDP test
 - `-icmp`: Use ICMP ping test (auto-fallback to TCP if no root)
 - `-http`: Use HTTP/HTTPS timing test
+- `-dns`: Use DNS query testing
 - `-compare <hostname>`: Compare mode - test both TCP/UDP on IPv4/IPv6
 
 ### Protocol-Specific Options
-- `-p <port>`: Port to test (TCP/UDP/HTTP modes, default: 53)
+- `-p <port>`: Port to test (TCP/UDP/HTTP/DNS modes, default: 53)
 - `-s <size>`: Packet size in bytes (ICMP only, default: 64)
+- `-dns-protocol <protocol>`: DNS protocol: udp, tcp, dot, doh (default: udp)
+- `-dns-query <domain>`: Domain name to query for DNS testing (default: dns.qosbox.com)
 
 ### IPv4/IPv6 Options
 - `-4only`: Test IPv4 only
@@ -146,6 +170,7 @@ sudo ./prototester -icmp
 - **TCP Mode**: Works without any special permissions ✅
 - **UDP Mode**: Works without root (uses connected UDP sockets) ✅
 - **HTTP Mode**: Works without root ✅
+- **DNS Mode**: Works without root (all DNS protocols) ✅
 
 ### ICMP Mode Behavior (Smart Fallback)
 1. **Linux**: First tries unprivileged ICMP sockets (`SOCK_DGRAM`)
@@ -278,6 +303,38 @@ Jitter: 52.672ms
 Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 ```
 
+### DNS Query Testing
+```
+High-Fidelity IPv4/IPv6 Latency Tester (DNS (UDP))
+===============================================
+
+Testing IPv6 DNS to [2001:4860:4860::8888]:53 (query: dns.qosbox.com)...
+Testing IPv4 DNS to 8.8.8.8:53 (query: dns.qosbox.com)...
+
+============================================================
+LATENCY TEST RESULTS
+============================================================
+
+IPv6 Results (2001:4860:4860::8888)
+----------------------------------------
+DNS Queries (UDP): 10 sent, 10 successful, 0 failed (100.0% success)
+Latency: min=33.334ms avg=37.488ms max=45.178ms stddev=5.444ms
+Jitter: 5.922ms
+Percentiles: P50=35.123ms P95=44.567ms P99=45.178ms
+
+IPv4 Results (8.8.8.8)
+----------------------------------------
+DNS Queries (UDP): 10 sent, 10 successful, 0 failed (100.0% success)
+Latency: min=31.667ms avg=40.668ms max=46.396ms stddev=6.443ms
+Jitter: 7.365ms
+Percentiles: P50=39.234ms P95=45.123ms P99=46.396ms
+
+IPv6 vs IPv4 Comparison
+----------------------------------------
+Average latency difference: 3.180ms (IPv6 is faster)
+Success rate: IPv6=100.0% IPv4=100.0%
+```
+
 ## Technical Details
 
 ### Protocol Implementation
@@ -308,6 +365,24 @@ Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 - Measures full HTTP request/response cycle including TLS handshake
 - Skips certificate validation for testing purposes
 - Forces IPv4 or IPv6 as specified
+
+#### DNS Mode (High-Fidelity DNS Testing)
+- **UDP DNS**: Traditional DNS queries over UDP (RFC 1035)
+  - Fastest DNS protocol, minimal overhead
+  - Uses dns.qosbox.com as default test domain
+  - Validates response ID matching for accuracy
+- **TCP DNS**: DNS queries over TCP for larger responses
+  - Handles DNS responses larger than 512 bytes
+  - Includes TCP connection establishment time
+  - Uses length-prefixed DNS messages
+- **DoT (DNS over TLS)**: Secure DNS over TLS (RFC 7858)
+  - Encrypted DNS queries for privacy
+  - Typically uses port 853
+  - Includes TLS handshake time in measurements
+- **DoH (DNS over HTTPS)**: DNS over HTTPS (RFC 8484)
+  - DNS queries over HTTPS for ultimate privacy
+  - Uses POST requests with DNS wire format
+  - Includes full HTTP/TLS overhead in timing
 
 ### Compare Mode
 - Performs DNS resolution to obtain both A (IPv4) and AAAA (IPv6) records
@@ -341,11 +416,18 @@ Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 # Web server testing
 ./prototester -http -p 443 -4 example.com
 
-# DNS server testing
-./prototester -u -p 53 -4 1.1.1.1
+# DNS server testing (multiple protocols)
+./prototester -dns -dns-protocol udp -4 1.1.1.1
+./prototester -dns -dns-protocol dot -4 1.1.1.1 -p 853
+./prototester -dns -dns-protocol doh -4 1.1.1.1 -p 443
 
 # SSH connectivity
 ./prototester -t -p 22 -4 your-server.com
+
+# DNS performance comparison across protocols
+./prototester -dns -dns-protocol udp -c 20 -4 8.8.8.8
+./prototester -dns -dns-protocol tcp -c 20 -4 8.8.8.8
+./prototester -dns -dns-protocol dot -c 20 -4 8.8.8.8 -p 853
 ```
 
 ### Network Analysis
@@ -363,9 +445,10 @@ Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 ## Troubleshooting
 
 ### Common Issues
-- **"Cannot specify multiple protocol flags"**: Use only one of `-t`, `-u`, `-icmp`, `-http` at a time
+- **"Cannot specify multiple protocol flags"**: Use only one of `-t`, `-u`, `-icmp`, `-http`, `-dns` at a time
 - **Connection timeouts**: Increase timeout with `-timeout 10s`
 - **"No A or AAAA records found"**: Hostname doesn't resolve to both IPv4 and IPv6 (for compare mode)
+- **"Invalid DNS protocol"**: Must be one of: udp, tcp, dot, doh
 
 ### Permission-Related
 - **"Operation not permitted" with ICMP**: This is normal - the tool automatically falls back to TCP
@@ -382,6 +465,13 @@ Percentiles: P50=145.234ms P95=170.123ms P99=173.730ms
 - **TLS errors**: The tool skips certificate validation, so this shouldn't occur
 - **Some servers block HEAD requests**: This is expected behavior for some services
 
+### DNS Issues
+- **"DNS response too short"**: Server may not support the requested protocol
+- **"DNS response ID mismatch"**: Network interference or server issues
+- **DoT connection failures**: Verify server supports DNS-over-TLS on port 853
+- **DoH HTTP errors**: Verify server supports DNS-over-HTTPS at /dns-query endpoint
+- **Custom query domains**: Use valid domain names (avoid localhost, IP addresses)
+
 ## Migration from Root-Required Version
 
 If you were previously running this tool with `sudo`, you can now:
@@ -389,7 +479,61 @@ If you were previously running this tool with `sudo`, you can now:
 1. **Remove `sudo` for most use cases**: `./prototester` works immediately
 2. **Use `-icmp` for ICMP testing**: It will automatically fall back to TCP if no root
 3. **Keep `sudo` only for true ICMP**: `sudo ./prototester -icmp` for raw socket ICMP
-4. **Try new protocols**: `-http` mode for web service testing
+4. **Try new protocols**: `-http` mode for web service testing, `-dns` for DNS performance analysis
+
+## DNS Testing Capabilities
+
+The DNS testing feature provides comprehensive analysis of DNS performance across multiple protocols:
+
+### Supported DNS Protocols
+- **UDP DNS** (default): Traditional DNS, fastest with minimal overhead
+- **TCP DNS**: For larger responses, includes connection establishment time
+- **DoT (DNS over TLS)**: Encrypted DNS for privacy, typically port 853
+- **DoH (DNS over HTTPS)**: DNS over HTTPS for maximum privacy and circumventing blocks
+
+### DNS Testing Examples
+```bash
+# Compare DNS protocols performance
+./prototester -dns -dns-protocol udp -c 20    # Traditional UDP
+./prototester -dns -dns-protocol tcp -c 20    # TCP for reliability
+./prototester -dns -dns-protocol dot -p 853 -c 20  # Encrypted DoT
+./prototester -dns -dns-protocol doh -p 443 -c 20  # DoH over HTTPS
+
+# Test specific DNS providers
+./prototester -dns -4 1.1.1.1 -dns-query cloudflare.com    # Cloudflare
+./prototester -dns -4 8.8.8.8 -dns-query google.com        # Google
+./prototester -dns -4 9.9.9.9 -dns-query quad9.net         # Quad9
+
+# DNS latency monitoring
+./prototester -dns -c 50 -i 500ms -v                       # High frequency
+./prototester -dns -dns-protocol dot -4 1.1.1.1 -p 853 -c 100  # DoT monitoring
+
+# Privacy-focused DNS testing
+./prototester -dns -dns-protocol doh -4 1.1.1.1 -p 443 -dns-query dns.qosbox.com
+```
+
+### Default Test Domain
+The tool uses `dns.qosbox.com` as the default query domain, which is specifically designed for DNS performance testing and provides consistent, reliable responses across all DNS protocols.
+
+## Use Cases
+
+### Network Performance Analysis
+- **DNS Provider Comparison**: Test multiple DNS providers to find the fastest
+- **Protocol Performance**: Compare UDP vs TCP vs DoT vs DoH performance
+- **Geographic Performance**: Test DNS servers in different regions
+- **Privacy vs Performance**: Measure the overhead of encrypted DNS protocols
+
+### Security and Privacy Testing
+- **DoT Deployment**: Verify DNS-over-TLS is working correctly
+- **DoH Testing**: Ensure DNS-over-HTTPS is functioning and performing well
+- **Fallback Testing**: Test DNS resolution when certain protocols are blocked
+- **Censorship Circumvention**: Verify encrypted DNS works in restricted networks
+
+### Troubleshooting DNS Issues
+- **Resolution Latency**: Identify slow DNS responses affecting application performance
+- **Protocol Availability**: Test which DNS protocols are supported/blocked
+- **IPv4 vs IPv6 DNS**: Compare DNS performance over different IP versions
+- **DNS Load Testing**: High-frequency testing to identify capacity limits
 
 ## License
 
