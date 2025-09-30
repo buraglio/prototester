@@ -15,6 +15,9 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 - **IPv4/IPv6 Dual Stack**: Tests both protocols simultaneously or individually
 - **Intelligent Scoring**: Performance ranking system based on success rate and latency
 - **JSON Output**: Machine-readable JSON output for programmatic analysis and automation
+- **Configuration Files**: YAML/JSON configuration files for defining multiple test scenarios
+- **Daemon Mode**: Run as a background service with scheduled test execution and logging
+- **InfluxDB Integration**: Optional time-series database integration for long-term metrics storage and monitoring
 - **Flexible Configuration**: Customizable targets, connection count, intervals, timeouts, and ports
 
 ## Requirements
@@ -147,6 +150,18 @@ sudo ./prototester -icmp
 ./prototester -dns -dns-protocol doh -json
 ```
 
+### Configuration Files
+```bash
+# Run tests from a configuration file
+./prototester -config config.yaml
+
+# Run with config file and override output location
+./prototester -config config.yaml -output custom-results.log
+
+# Run in daemon mode using configuration file
+./prototester -config daemon-config.yaml -daemon
+```
+
 ## Command Line Options
 
 ### Basic Options
@@ -174,6 +189,11 @@ sudo ./prototester -icmp
 ### Output Options
 - `-json`: Output results in JSON format instead of human-readable text
 - `-v`: Verbose output
+
+### Configuration and Daemon Options
+- `-config <file>`: Configuration file (YAML or JSON format) for batch testing and daemon mode
+- `-daemon`: Run in daemon mode using configuration file (requires -config)
+- `-output <file>`: Output file for results (stdout if not specified, can override config file setting)
 
 ### IPv4/IPv6 Options
 - `-4only`: Test IPv4 only
@@ -460,6 +480,631 @@ Success rate: IPv6=100.0% IPv4=100.0%
   "timestamp": "2025-09-29T11:53:32.780345-05:00"
 }
 ```
+
+## Configuration Files
+
+ProtoTester supports YAML and JSON configuration files for defining multiple test scenarios, daemon mode operation, and batch testing.
+
+### Configuration File Structure
+
+```yaml
+global:
+  output_file: "results.log"              # Output file for all results
+  log_level: "info"                       # Log level: debug, info, warn, error
+  default_count: 10                       # Default test count for all tests
+  timeout: "3s"                          # Default timeout for all tests
+  interval: "1s"                         # Default interval between tests
+  json_output: true                       # Use JSON output format (recommended)
+
+  # InfluxDB time-series database integration
+  influxdb:
+    enabled: false                        # Enable InfluxDB output
+    url: "http://localhost:8086"          # InfluxDB server URL
+    token: "your-influxdb-token"          # InfluxDB authentication token
+    organization: "your-organization"     # InfluxDB organization name
+    bucket: "network-monitoring"          # InfluxDB bucket name
+    measurement: "network_latency"        # InfluxDB measurement name (default: network_latency)
+    batch_size: 1000                      # Number of points to batch before writing
+    flush_interval: "5s"                  # How often to flush batched data to InfluxDB
+
+# Daemon mode configuration for background service operation
+daemon:
+  enabled: false                          # Enable daemon mode
+  run_interval: "5m"                      # How often to run complete test cycles
+  output_file: "daemon.log"               # Daemon-specific output file
+  log_file: "daemon.log"                  # Daemon log file for operational messages
+  pid_file: "prototester.pid"             # PID file location for process management
+  max_log_size: 104857600                 # Maximum log file size in bytes (100MB default)
+  rotate_logs: true                       # Enable automatic log rotation
+  stop_on_failure: false                  # Continue running even if individual tests fail
+  max_retries: 3                          # Maximum number of retries for failed tests
+  retry_interval: "30s"                   # Wait time between retry attempts
+
+# Individual test definitions
+tests:
+  - name: "Google DNS TCP"                # Test identification name
+    type: "tcp"                          # Protocol: tcp, udp, icmp, http, https, dns, dot, doh, compare
+    target_ipv4: "8.8.8.8"              # IPv4 target address
+    target_ipv6: "2001:4860:4860::8888"  # IPv6 target address (optional)
+    port: 53                             # Target port number
+    count: 10                            # Number of test iterations
+    timeout: "3s"                        # Per-test timeout
+    interval: "500ms"                    # Interval between individual tests
+    size: 64                             # Packet size for applicable protocols (optional)
+    ipv4_only: false                     # Test IPv4 only (optional)
+    ipv6_only: false                     # Test IPv6 only (optional)
+    enabled: true                        # Enable/disable this test
+    schedule: "*/5 * * * *"              # Cron-like schedule (optional, daemon mode)
+
+  - name: "DNS Query Test"
+    type: "dns"                          # DNS query test
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    port: 53
+    dns_protocol: "udp"                  # DNS protocol: udp, tcp, dot (DNS over TLS), doh (DNS over HTTPS)
+    dns_query: "google.com"              # Domain name to query
+    count: 5
+    enabled: true
+
+  - name: "HTTP Performance"
+    type: "http"                         # HTTP request test
+    target_ipv4: "142.250.191.110"      # Web server IP
+    port: 80
+    count: 3
+    enabled: true
+
+  - name: "HTTPS Performance"
+    type: "https"                        # HTTPS request test
+    target_ipv4: "142.250.191.110"
+    port: 443
+    count: 3
+    enabled: true
+
+  - name: "ICMP Ping Test"
+    type: "icmp"                         # ICMP ping test
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    count: 10
+    enabled: true
+
+  - name: "Multi-Protocol Compare"
+    type: "compare"                      # Compare multiple protocols
+    hostname: "google.com"               # Hostname to resolve and test
+    port: 80                             # Port for protocol tests
+    count: 5
+    enabled: true
+```
+
+### Configuration Parameters Reference
+
+#### Global Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `output_file` | string | - | Output file path for test results |
+| `log_level` | string | "info" | Log level: debug, info, warn, error |
+| `default_count` | int | 10 | Default number of test iterations |
+| `timeout` | duration | "3s" | Default timeout for all tests |
+| `interval` | duration | "1s" | Default interval between tests |
+| `json_output` | bool | false | Enable JSON output format |
+
+#### InfluxDB Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | Enable InfluxDB output |
+| `url` | string | - | InfluxDB server URL (e.g., "http://localhost:8086") |
+| `token` | string | - | InfluxDB authentication token |
+| `organization` | string | - | InfluxDB organization name |
+| `bucket` | string | - | InfluxDB bucket for storing metrics |
+| `measurement` | string | "network_latency" | InfluxDB measurement name |
+| `batch_size` | int | 1000 | Number of points to batch before writing |
+| `flush_interval` | duration | "5s" | How often to flush batched data |
+
+#### Daemon Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | Enable daemon mode |
+| `run_interval` | duration | "5m" | How often to run complete test cycles |
+| `output_file` | string | - | Daemon-specific output file |
+| `log_file` | string | - | Daemon log file for operational messages |
+| `pid_file` | string | - | PID file location for process management |
+| `max_log_size` | int | 104857600 | Maximum log file size in bytes (100MB) |
+| `rotate_logs` | bool | true | Enable automatic log rotation |
+| `stop_on_failure` | bool | false | Stop daemon if any test fails |
+| `max_retries` | int | 3 | Maximum retries for failed tests |
+| `retry_interval` | duration | "30s" | Wait time between retry attempts |
+
+#### Test Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name` | string | - | **Required.** Test identification name |
+| `type` | string | - | **Required.** Protocol type: tcp, udp, icmp, http, https, dns, dot, doh, compare |
+| `target_ipv4` | string | - | IPv4 target address |
+| `target_ipv6` | string | - | IPv6 target address (optional) |
+| `hostname` | string | - | Hostname for compare mode (mutually exclusive with target_ipv4/ipv6) |
+| `port` | int | 53 | Target port number |
+| `count` | int | 10 | Number of test iterations |
+| `timeout` | duration | "3s" | Per-test timeout |
+| `interval` | duration | "1s" | Interval between individual tests |
+| `size` | int | 64 | Packet size for applicable protocols |
+| `ipv4_only` | bool | false | Test IPv4 only |
+| `ipv6_only` | bool | false | Test IPv6 only |
+| `enabled` | bool | true | Enable/disable this test |
+| `schedule` | string | - | Cron-like schedule for daemon mode (optional) |
+| `dns_protocol` | string | "udp" | DNS protocol: udp, tcp, dot, doh |
+| `dns_query` | string | "google.com" | Domain name to query for DNS tests |
+
+#### Protocol-Specific Notes
+
+- **TCP/UDP**: Use `target_ipv4`/`target_ipv6` and `port`
+- **ICMP**: Only uses `target_ipv4`/`target_ipv6`, `port` is ignored
+- **HTTP/HTTPS**: Uses `target_ipv4`/`target_ipv6` and `port` (80/443 typically)
+- **DNS**: Requires `dns_protocol` and `dns_query` parameters
+- **DoT (DNS over TLS)**: Uses port 853 by default
+- **DoH (DNS over HTTPS)**: Uses port 443 and HTTPS transport
+- **Compare**: Uses `hostname` to resolve and test multiple protocols
+
+### Running with Configuration Files
+
+```bash
+# Run tests from YAML configuration
+./prototester -config example-config.yaml
+
+# Run tests from JSON configuration
+./prototester -config example-config.json
+
+# Override output file
+./prototester -config config.yaml -output custom-results.log
+
+# Run in daemon mode
+./prototester -config daemon-config.yaml -daemon
+
+# Run with InfluxDB output enabled
+./prototester -config influxdb-config.yaml
+```
+
+### InfluxDB Monitoring Examples
+
+#### Production Network Monitoring with InfluxDB
+
+```yaml
+global:
+  json_output: true
+  influxdb:
+    enabled: true
+    url: "https://influxdb.company.com:8086"
+    token: "${INFLUXDB_TOKEN}"              # Use environment variable
+    organization: "network-ops"
+    bucket: "network-monitoring"
+    measurement: "network_latency"
+    batch_size: 500                         # Higher frequency = smaller batches
+    flush_interval: "2s"                    # Frequent flushes for real-time data
+
+daemon:
+  enabled: true
+  run_interval: "30s"                       # High-frequency monitoring
+  output_file: "/var/log/prototester.log"
+  max_retries: 2
+  retry_interval: "5s"
+
+tests:
+  # Critical infrastructure monitoring
+  - name: "Primary DC Gateway"
+    type: "icmp"
+    target_ipv4: "10.0.1.1"
+    count: 3
+    enabled: true
+
+  - name: "DNS Primary"
+    type: "dns"
+    target_ipv4: "10.0.10.1"
+    dns_protocol: "udp"
+    dns_query: "company.com"
+    count: 2
+    enabled: true
+
+  - name: "Web Services"
+    type: "https"
+    target_ipv4: "10.0.20.100"
+    port: 443
+    count: 2
+    enabled: true
+```
+
+#### Multi-Location Network Monitoring
+
+```yaml
+global:
+  influxdb:
+    enabled: true
+    url: "http://localhost:8086"
+    token: "monitoring-token"
+    organization: "infrastructure"
+    bucket: "network-metrics"
+    measurement: "multi_location_latency"
+
+daemon:
+  enabled: true
+  run_interval: "1m"
+
+tests:
+  # East Coast Data Center
+  - name: "DC-East-Primary"
+    type: "tcp"
+    target_ipv4: "192.168.1.100"
+    port: 22
+    count: 5
+    enabled: true
+
+  - name: "DC-East-Backup"
+    type: "tcp"
+    target_ipv4: "192.168.1.101"
+    port: 22
+    count: 5
+    enabled: true
+
+  # West Coast Data Center
+  - name: "DC-West-Primary"
+    type: "tcp"
+    target_ipv4: "192.168.2.100"
+    port: 22
+    count: 5
+    enabled: true
+
+  # External connectivity checks
+  - name: "External-Google"
+    type: "compare"
+    hostname: "google.com"
+    port: 443
+    count: 3
+    enabled: true
+
+  - name: "External-Cloudflare"
+    type: "compare"
+    hostname: "cloudflare.com"
+    port: 443
+    count: 3
+    enabled: true
+```
+
+#### DNS Performance Monitoring
+
+```yaml
+global:
+  influxdb:
+    enabled: true
+    url: "http://localhost:8086"
+    token: "dns-monitoring-token"
+    organization: "dns-team"
+    bucket: "dns-performance"
+    measurement: "dns_latency"
+
+daemon:
+  enabled: true
+  run_interval: "2m"
+
+tests:
+  # Primary DNS servers
+  - name: "DNS-Primary-UDP"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    dns_protocol: "udp"
+    dns_query: "example.com"
+    count: 5
+    enabled: true
+
+  - name: "DNS-Primary-TCP"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    dns_protocol: "tcp"
+    dns_query: "example.com"
+    count: 3
+    enabled: true
+
+  - name: "DNS-Primary-DoH"
+    type: "doh"
+    target_ipv4: "8.8.8.8"
+    dns_query: "example.com"
+    count: 3
+    enabled: true
+
+  # Secondary DNS servers
+  - name: "DNS-Secondary-UDP"
+    type: "dns"
+    target_ipv4: "1.1.1.1"
+    dns_protocol: "udp"
+    dns_query: "example.com"
+    count: 5
+    enabled: true
+
+  - name: "DNS-Cloudflare-DoT"
+    type: "dot"
+    target_ipv4: "1.1.1.1"
+    dns_query: "example.com"
+    count: 3
+    enabled: true
+```
+
+### Test Types
+
+The configuration file supports all protocol types:
+
+- **`tcp`**: TCP connection tests
+- **`udp`**: UDP connectivity tests
+- **`icmp`**: ICMP ping tests (with automatic fallback)
+- **`http`**: HTTP request timing tests
+- **`https`**: HTTPS request timing tests
+- **`dns`**: DNS query tests (specify `dns_protocol`)
+- **`dot`**: DNS-over-TLS tests (automatically sets protocol)
+- **`doh`**: DNS-over-HTTPS tests (automatically sets protocol)
+- **`compare`**: Protocol comparison tests (requires `hostname`)
+
+### Configuration Examples
+
+#### Basic Monitoring Setup
+```yaml
+global:
+  output_file: "monitoring.log"
+  json_output: true
+
+tests:
+  - name: "Primary DNS"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    count: 5
+    enabled: true
+
+  - name: "Web Connectivity"
+    type: "http"
+    target_ipv4: "142.250.191.110"
+    port: 80
+    count: 3
+    enabled: true
+```
+
+#### DNS Performance Testing
+```yaml
+global:
+  default_count: 10
+
+tests:
+  - name: "DNS UDP"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    dns_protocol: "udp"
+    dns_query: "example.com"
+    enabled: true
+
+  - name: "DNS over TLS"
+    type: "dot"
+    target_ipv4: "1.1.1.1"
+    port: 853
+    dns_query: "example.com"
+    enabled: true
+
+  - name: "DNS over HTTPS"
+    type: "doh"
+    target_ipv4: "1.1.1.1"
+    port: 443
+    dns_query: "example.com"
+    enabled: true
+```
+
+## Daemon Mode
+
+Daemon mode allows ProtoTester to run continuously as a background service, executing scheduled test cycles and logging results.
+
+### Starting Daemon Mode
+
+```bash
+# Run as daemon with configuration file
+./prototester -config daemon-config.yaml -daemon
+
+# Run in background
+nohup ./prototester -config daemon-config.yaml -daemon > /dev/null 2>&1 &
+
+# With systemd (create service file)
+sudo systemctl start prototester
+```
+
+### Daemon Configuration
+
+```yaml
+daemon:
+  enabled: true
+  run_interval: "5m"                      # Test every 5 minutes
+  output_file: "/var/log/prototester.log" # Results output
+  log_file: "/var/log/prototester.log"    # Daemon logs
+  pid_file: "/var/run/prototester.pid"    # PID file
+  max_log_size: 104857600                 # 100MB log rotation
+  rotate_logs: true                       # Enable log rotation
+  stop_on_failure: false                  # Continue on test failures
+  max_retries: 3                          # Retry failed tests 3 times
+  retry_interval: "30s"                   # Wait 30s between retries
+```
+
+### Daemon Features
+
+- **Scheduled Execution**: Run test cycles at regular intervals
+- **Graceful Shutdown**: Responds to SIGINT/SIGTERM signals
+- **PID File Management**: Creates and cleans up PID files
+- **Retry Logic**: Automatically retries failed tests
+- **Log Rotation**: Prevents log files from growing too large
+- **Error Handling**: Configurable behavior on test failures
+- **Signal Handling**: Proper cleanup on shutdown
+
+### Stopping Daemon
+
+```bash
+# Send termination signal
+kill $(cat prototester.pid)
+
+# Force stop if necessary
+kill -9 $(cat prototester.pid)
+
+# With systemd
+sudo systemctl stop prototester
+```
+
+### Daemon Output
+
+#### Human-Readable Format
+```
+[2025-09-29 12:00:00] Primary DNS (tcp): SUCCESS - Duration: 0.01s
+[2025-09-29 12:00:01] Web Test (http): SUCCESS - Duration: 0.15s
+
+=== Test Summary ===
+Total tests: 2
+Successful: 2
+Failed: 0
+Success rate: 100.0%
+```
+
+#### JSON Format
+```json
+{
+  "test_name": "Primary DNS",
+  "timestamp": "2025-09-29T12:00:00Z",
+  "test_type": "tcp",
+  "target": "IPv4:8.8.8.8 IPv6:2001:4860:4860::8888",
+  "success": true,
+  "results": {
+    "ipv4_results": {
+      "sent": 5,
+      "received": 5,
+      "success_rate": 100.0,
+      "avg_ms": 12345678
+    }
+  },
+  "duration_seconds": 0.01
+}
+```
+
+## InfluxDB Integration
+
+ProtoTester supports optional integration with InfluxDB for time-series storage and monitoring of network latency metrics. This enables long-term data analysis, alerting, and visualization with tools like Grafana.
+
+### Configuration
+
+Enable InfluxDB output by configuring the `influxdb` section in your configuration file:
+
+```yaml
+global:
+  influxdb:
+    enabled: true
+    url: "http://localhost:8086"
+    token: "your-influxdb-token"
+    organization: "your-organization"
+    bucket: "network-monitoring"
+    measurement: "network_latency"
+    batch_size: 1000
+    flush_interval: "5s"
+```
+
+### InfluxDB Setup
+
+1. **Install InfluxDB**: Follow the [official InfluxDB installation guide](https://docs.influxdata.com/influxdb/v2.0/install/)
+
+2. **Create Token**: Generate an authentication token with write permissions to your target bucket
+
+3. **Create Bucket**: Create a bucket for storing network monitoring data
+
+4. **Configure ProtoTester**: Update your configuration file with the InfluxDB connection details
+
+### Data Schema
+
+ProtoTester writes the following metrics to InfluxDB:
+
+**Tags**:
+- `test_name`: Name of the test from configuration
+- `test_type`: Protocol type (tcp, udp, icmp, http, https, dns, etc.)
+- `target`: Target address being tested
+- `ip_version`: IP version (4 or 6)
+
+**Fields**:
+- `sent`: Number of packets/requests sent
+- `received`: Number of successful responses
+- `lost`: Number of lost packets/requests
+- `min_ms`: Minimum latency in milliseconds
+- `max_ms`: Maximum latency in milliseconds
+- `avg_ms`: Average latency in milliseconds
+- `stddev_ms`: Standard deviation of latency
+- `jitter_ms`: Jitter measurement
+- `success_rate`: Success rate percentage (0-100)
+
+### Usage Examples
+
+#### Basic InfluxDB Monitoring
+
+```yaml
+global:
+  influxdb:
+    enabled: true
+    url: "http://localhost:8086"
+    token: "your-token"
+    organization: "monitoring"
+    bucket: "network-metrics"
+
+tests:
+  - name: "DNS Performance"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    count: 5
+```
+
+#### High-Frequency Monitoring
+
+```yaml
+global:
+  influxdb:
+    enabled: true
+    url: "http://influxdb.example.com:8086"
+    token: "your-production-token"
+    organization: "ops"
+    bucket: "network-monitoring"
+    batch_size: 500
+    flush_interval: "1s"
+
+daemon:
+  enabled: true
+  run_interval: "10s"
+
+tests:
+  - name: "Critical Service"
+    type: "https"
+    target_ipv4: "192.168.1.100"
+    port: 443
+    count: 3
+```
+
+### Grafana Integration
+
+Once data is flowing into InfluxDB, you can create Grafana dashboards to visualize network performance:
+
+1. **Add InfluxDB Datasource**: Configure Grafana with your InfluxDB instance
+2. **Create Queries**: Use Flux queries to analyze latency trends
+3. **Set up Alerts**: Configure alerting based on latency thresholds
+
+Example Flux query for average latency over time:
+```flux
+from(bucket: "network-monitoring")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r._measurement == "network_latency")
+  |> filter(fn: (r) => r._field == "avg_ms")
+  |> aggregateWindow(every: 1m, fn: mean)
+```
+
+### Troubleshooting
+
+- **Connection Issues**: Verify InfluxDB URL, token, and network connectivity
+- **Permission Errors**: Ensure the token has write permissions to the specified bucket
+- **Data Not Appearing**: Check ProtoTester logs for InfluxDB write errors
+- **Performance**: Adjust `batch_size` and `flush_interval` for your write volume
 
 ## Technical Details
 

@@ -1,0 +1,69 @@
+# ProtoTester Daemon Configuration
+# Minimal configuration for running as a monitoring daemon
+
+global:
+  output_file: "prototester-results.log"
+  json_output: true
+  default_count: 5
+
+  # InfluxDB time-series database integration
+  influxdb:
+    enabled: true                          # Enable InfluxDB output for time-series data
+    url: "http://localhost:8086"           # InfluxDB server URL
+    token: "your-monitoring-token"         # Replace with your InfluxDB token
+    organization: "monitoring-org"         # Replace with your organization
+    bucket: "network-metrics"              # Bucket for network monitoring data
+    measurement: "network_latency"         # Measurement name for latency data
+
+daemon:
+  enabled: true
+  run_interval: "2m"                      # Run tests every 2 minutes
+  output_file: "prototester-daemon.log"
+  pid_file: "prototester.pid"
+  max_retries: 2
+  retry_interval: "10s"
+  stop_on_failure: false
+
+tests:
+  # Core connectivity monitoring
+  - name: "Primary DNS"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    target_ipv6: "2001:4860:4860::8888"
+    port: 53
+    count: 3
+    enabled: true
+
+  - name: "Secondary DNS"
+    type: "tcp"
+    target_ipv4: "1.1.1.1"
+    target_ipv6: "2606:4700:4700::1111"
+    port: 53
+    count: 3
+    enabled: true
+
+  # Web connectivity
+  - name: "HTTP Connectivity"
+    type: "http"
+    target_ipv4: "142.250.191.110"  # google.com
+    port: 80
+    count: 2
+    enabled: true
+
+  # DNS resolution testing
+  - name: "DNS Resolution"
+    type: "dns"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    dns_protocol: "udp"
+    dns_query: "google.com"
+    count: 3
+    enabled: true
+
+  # Performance comparison
+  - name: "Google Performance"
+    type: "compare"
+    hostname: "google.com"
+    port: 80
+    count: 3
+    enabled: true

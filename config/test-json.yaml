@@ -1,0 +1,11 @@
+global:
+  output_file: "json-test.log"
+  json_output: true
+
+tests:
+  - name: "JSON Test"
+    type: "tcp"
+    target_ipv4: "8.8.8.8"
+    port: 53
+    count: 1
+    enabled: true

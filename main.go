@@ -15,12 +15,17 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
 type PingResult struct {
@@ -139,6 +144,238 @@ type DoHQuestion struct {
 	Type int    `json:"type"`
 }
 
+// Configuration file structures
+type Config struct {
+	Global GlobalConfig  `yaml:"global" json:"global"`
+	Tests  []TestSpec    `yaml:"tests" json:"tests"`
+	Daemon DaemonConfig  `yaml:"daemon" json:"daemon"`
+}
+
+type GlobalConfig struct {
+	OutputFile   string        `yaml:"output_file" json:"output_file"`
+	LogLevel     string        `yaml:"log_level" json:"log_level"`
+	DefaultCount int           `yaml:"default_count" json:"default_count"`
+	Timeout      time.Duration `yaml:"timeout" json:"timeout"`
+	Interval     time.Duration `yaml:"interval" json:"interval"`
+	JSONOutput   bool          `yaml:"json_output" json:"json_output"`
+	InfluxDB     InfluxDBConfig `yaml:"influxdb" json:"influxdb"`
+}
+
+type InfluxDBConfig struct {
+	Enabled      bool   `yaml:"enabled" json:"enabled"`
+	URL          string `yaml:"url" json:"url"`
+	Token        string `yaml:"token" json:"token"`
+	Organization string `yaml:"organization" json:"organization"`
+	Bucket       string `yaml:"bucket" json:"bucket"`
+	Measurement  string `yaml:"measurement" json:"measurement"`
+	BatchSize    int    `yaml:"batch_size" json:"batch_size"`
+	FlushInterval time.Duration `yaml:"flush_interval" json:"flush_interval"`
+}
+
+type TestSpec struct {
+	Name        string        `yaml:"name" json:"name"`
+	Type        string        `yaml:"type" json:"type"` // tcp, udp, icmp, http, dns, compare
+	Target4     string        `yaml:"target_ipv4" json:"target_ipv4"`
+	Target6     string        `yaml:"target_ipv6" json:"target_ipv6"`
+	Hostname    string        `yaml:"hostname" json:"hostname"` // for compare mode
+	Port        int           `yaml:"port" json:"port"`
+	Count       int           `yaml:"count" json:"count"`
+	Interval    time.Duration `yaml:"interval" json:"interval"`
+	Timeout     time.Duration `yaml:"timeout" json:"timeout"`
+	Size        int           `yaml:"size" json:"size"` // ICMP packet size
+	DNSProtocol string        `yaml:"dns_protocol" json:"dns_protocol"`
+	DNSQuery    string        `yaml:"dns_query" json:"dns_query"`
+	IPv4Only    bool          `yaml:"ipv4_only" json:"ipv4_only"`
+	IPv6Only    bool          `yaml:"ipv6_only" json:"ipv6_only"`
+	Enabled     bool          `yaml:"enabled" json:"enabled"`
+	Schedule    string        `yaml:"schedule" json:"schedule"` // cron-like schedule
+}
+
+type DaemonConfig struct {
+	Enabled        bool          `yaml:"enabled" json:"enabled"`
+	RunInterval    time.Duration `yaml:"run_interval" json:"run_interval"`
+	OutputFile     string        `yaml:"output_file" json:"output_file"`
+	LogFile        string        `yaml:"log_file" json:"log_file"`
+	PidFile        string        `yaml:"pid_file" json:"pid_file"`
+	MaxLogSize     int64         `yaml:"max_log_size" json:"max_log_size"`
+	RotateLogs     bool          `yaml:"rotate_logs" json:"rotate_logs"`
+	StopOnFailure  bool          `yaml:"stop_on_failure" json:"stop_on_failure"`
+	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
+	RetryInterval  time.Duration `yaml:"retry_interval" json:"retry_interval"`
+}
+
+type DaemonResult struct {
+	TestName    string      `json:"test_name"`
+	Timestamp   time.Time   `json:"timestamp"`
+	TestType    string      `json:"test_type"`
+	Target      string      `json:"target"`
+	Success     bool        `json:"success"`
+	Results     interface{} `json:"results"`
+	Error       string      `json:"error,omitempty"`
+	Duration    float64     `json:"duration_seconds"`
+}
+
+// Global InfluxDB client
+var influxClient influxdb2.Client
+
+func initInfluxDB(config InfluxDBConfig) error {
+	if !config.Enabled {
+		return nil
+	}
+
+	influxClient = influxdb2.NewClient(config.URL, config.Token)
+
+	// Test connection
+	health, err := influxClient.Health(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to connect to InfluxDB: %w", err)
+	}
+
+	if health.Status != "pass" {
+		msg := ""
+		if health.Message != nil {
+			msg = *health.Message
+		}
+		return fmt.Errorf("InfluxDB health check failed: %s", msg)
+	}
+
+	log.Printf("InfluxDB connection established to %s", config.URL)
+	return nil
+}
+
+func writeToInfluxDB(config InfluxDBConfig, testName, testType, target string, stats Statistics, tags map[string]string) error {
+	if !config.Enabled || influxClient == nil {
+		return nil
+	}
+
+	// Create write API
+	writeAPI := influxClient.WriteAPIBlocking(config.Organization, config.Bucket)
+
+	// Set default measurement name if not specified
+	measurement := config.Measurement
+	if measurement == "" {
+		measurement = "network_latency"
+	}
+
+	// Prepare tags
+	allTags := map[string]string{
+		"test_name": testName,
+		"test_type": testType,
+		"target":    target,
+	}
+
+	// Add custom tags
+	for k, v := range tags {
+		allTags[k] = v
+	}
+
+	// Prepare fields
+	fields := map[string]interface{}{
+		"sent":         stats.Sent,
+		"received":     stats.Received,
+		"lost":         stats.Lost,
+		"min_ms":       float64(stats.Min.Nanoseconds()) / 1e6,
+		"max_ms":       float64(stats.Max.Nanoseconds()) / 1e6,
+		"avg_ms":       float64(stats.Avg.Nanoseconds()) / 1e6,
+		"stddev_ms":    float64(stats.StdDev.Nanoseconds()) / 1e6,
+		"jitter_ms":    float64(stats.Jitter.Nanoseconds()) / 1e6,
+		"success_rate": stats.SuccessRate,
+	}
+
+	// Create point
+	point := influxdb2.NewPoint(measurement, allTags, fields, time.Now())
+
+	// Write point
+	err := writeAPI.WritePoint(context.Background(), point)
+	if err != nil {
+		return fmt.Errorf("failed to write to InfluxDB: %w", err)
+	}
+
+	return nil
+}
+
+func writeResultToInfluxDB(config InfluxDBConfig, result DaemonResult) {
+	if !config.Enabled || influxClient == nil {
+		return
+	}
+
+	// Extract statistics from the results interface{}
+	var stats4, stats6 *Statistics
+	if result.Results != nil {
+		if jsonData, ok := result.Results.(map[string]interface{}); ok {
+			// Handle IPv4 results
+			if ipv4Data, exists := jsonData["ipv4_results"]; exists {
+				if ipv4Map, ok := ipv4Data.(map[string]interface{}); ok {
+					stats4 = extractStatsFromMap(ipv4Map)
+				}
+			}
+			// Handle IPv6 results
+			if ipv6Data, exists := jsonData["ipv6_results"]; exists {
+				if ipv6Map, ok := ipv6Data.(map[string]interface{}); ok {
+					stats6 = extractStatsFromMap(ipv6Map)
+				}
+			}
+		}
+	}
+
+	// Write IPv4 results if available
+	if stats4 != nil {
+		tags := map[string]string{
+			"ip_version": "4",
+		}
+		if err := writeToInfluxDB(config, result.TestName, result.TestType, result.Target, *stats4, tags); err != nil {
+			log.Printf("Error writing IPv4 results to InfluxDB: %v", err)
+		}
+	}
+
+	// Write IPv6 results if available
+	if stats6 != nil {
+		tags := map[string]string{
+			"ip_version": "6",
+		}
+		if err := writeToInfluxDB(config, result.TestName, result.TestType, result.Target, *stats6, tags); err != nil {
+			log.Printf("Error writing IPv6 results to InfluxDB: %v", err)
+		}
+	}
+}
+
+func extractStatsFromMap(data map[string]interface{}) *Statistics {
+	getFloat := func(key string) float64 {
+		if val, ok := data[key]; ok {
+			switch v := val.(type) {
+			case float64:
+				return v
+			case int:
+				return float64(v)
+			}
+		}
+		return 0
+	}
+
+	getDuration := func(key string) time.Duration {
+		ms := getFloat(key)
+		return time.Duration(ms * 1e6) // Convert ms to nanoseconds
+	}
+
+	return &Statistics{
+		Sent:        int(getFloat("sent")),
+		Received:    int(getFloat("received")),
+		Lost:        int(getFloat("lost")),
+		Min:         getDuration("min_ms"),
+		Max:         getDuration("max_ms"),
+		Avg:         getDuration("avg_ms"),
+		StdDev:      getDuration("stddev_ms"),
+		Jitter:      getDuration("jitter_ms"),
+		SuccessRate: getFloat("success_rate"),
+	}
+}
+
+func closeInfluxDB() {
+	if influxClient != nil {
+		influxClient.Close()
+	}
+}
+
 func main() {
 	var (
 		target4     = flag.String("4", "8.8.8.8", "IPv4 target address (auto-enables IPv4-only if custom)")
@@ -160,8 +397,20 @@ func main() {
 		dnsProtocol = flag.String("dns-protocol", "udp", "DNS protocol: udp, tcp, dot, doh")
 		dnsQuery    = flag.String("dns-query", "dns-query.qosbox.com", "Domain name to query for DNS testing")
 		jsonOutput  = flag.Bool("json", false, "Output results in JSON format instead of human-readable text")
+		configFile  = flag.String("config", "", "Configuration file (YAML or JSON format)")
+		daemon      = flag.Bool("daemon", false, "Run in daemon mode using configuration file")
+		outputFile  = flag.String("output", "", "Output file for results (stdout if not specified)")
 	)
 	flag.Parse()
+
+	// Handle configuration file and daemon mode
+	if *configFile != "" || *daemon {
+		if *configFile == "" {
+			log.Fatal("Configuration file required for daemon mode. Use -config flag.")
+		}
+		runWithConfig(*configFile, *daemon, *outputFile)
+		return
+	}
 
 	// Validate DNS protocol
 	validDNSProtocols := map[string]bool{
@@ -2331,4 +2580,442 @@ func (lt *LatencyTester) printHTTPComparisonResults(result *ComparisonResult) {
 	}
 
 	fmt.Printf("\nScoring: Based on success rate and latency (higher success + lower latency = higher score)\n\n")
+}
+
+// Configuration file and daemon mode functions
+func loadConfig(filename string) (*Config, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %v", err)
+	}
+
+	var config Config
+
+	// Determine file format by extension
+	ext := filepath.Ext(filename)
+	switch ext {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("failed to parse YAML config: %v", err)
+		}
+	case ".json":
+		if err := json.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON config: %v", err)
+		}
+	default:
+		// Try YAML first, then JSON
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			if err2 := json.Unmarshal(data, &config); err2 != nil {
+				return nil, fmt.Errorf("failed to parse config as YAML (%v) or JSON (%v)", err, err2)
+			}
+		}
+	}
+
+	// Set defaults for missing values
+	setConfigDefaults(&config)
+
+	return &config, nil
+}
+
+func setConfigDefaults(config *Config) {
+	// Global defaults
+	if config.Global.DefaultCount == 0 {
+		config.Global.DefaultCount = 10
+	}
+	if config.Global.Timeout == 0 {
+		config.Global.Timeout = 3 * time.Second
+	}
+	if config.Global.Interval == 0 {
+		config.Global.Interval = 1 * time.Second
+	}
+	if config.Global.LogLevel == "" {
+		config.Global.LogLevel = "info"
+	}
+
+	// Daemon defaults
+	if config.Daemon.RunInterval == 0 {
+		config.Daemon.RunInterval = 5 * time.Minute
+	}
+	if config.Daemon.MaxLogSize == 0 {
+		config.Daemon.MaxLogSize = 100 * 1024 * 1024 // 100MB
+	}
+	if config.Daemon.MaxRetries == 0 {
+		config.Daemon.MaxRetries = 3
+	}
+	if config.Daemon.RetryInterval == 0 {
+		config.Daemon.RetryInterval = 30 * time.Second
+	}
+
+	// Test defaults
+	for i := range config.Tests {
+		test := &config.Tests[i]
+		if test.Count == 0 {
+			test.Count = config.Global.DefaultCount
+		}
+		if test.Timeout == 0 {
+			test.Timeout = config.Global.Timeout
+		}
+		if test.Interval == 0 {
+			test.Interval = config.Global.Interval
+		}
+		if test.Port == 0 {
+			switch test.Type {
+			case "http":
+				test.Port = 80
+			case "https":
+				test.Port = 443
+			case "dns":
+				test.Port = 53
+			case "dot":
+				test.Port = 853
+			case "doh":
+				test.Port = 443
+			default:
+				test.Port = 53
+			}
+		}
+		if test.Size == 0 {
+			test.Size = 64
+		}
+		if test.DNSProtocol == "" {
+			test.DNSProtocol = "udp"
+		}
+		if test.DNSQuery == "" {
+			test.DNSQuery = "dns-query.qosbox.com"
+		}
+		if test.Target4 == "" {
+			test.Target4 = "8.8.8.8"
+		}
+		if test.Target6 == "" {
+			test.Target6 = "2001:4860:4860::8888"
+		}
+	}
+}
+
+func runWithConfig(configFile string, daemonMode bool, outputFile string) {
+	config, err := loadConfig(configFile)
+	if err != nil {
+		log.Fatalf("Error loading configuration: %v", err)
+	}
+
+	// Override output file if specified on command line
+	if outputFile != "" {
+		config.Global.OutputFile = outputFile
+		config.Daemon.OutputFile = outputFile
+	}
+
+	// Initialize InfluxDB if enabled
+	if err := initInfluxDB(config.Global.InfluxDB); err != nil {
+		log.Fatalf("Error initializing InfluxDB: %v", err)
+	}
+	defer closeInfluxDB()
+
+	if daemonMode || config.Daemon.Enabled {
+		runDaemon(config)
+	} else {
+		runConfigTests(config)
+	}
+}
+
+func runConfigTests(config *Config) {
+	var outputWriter io.Writer = os.Stdout
+
+	// Setup output file if specified
+	if config.Global.OutputFile != "" {
+		file, err := os.OpenFile(config.Global.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("Failed to open output file: %v", err)
+		}
+		defer file.Close()
+		outputWriter = file
+	}
+
+	results := make([]DaemonResult, 0)
+
+	for _, testConfig := range config.Tests {
+		if !testConfig.Enabled {
+			continue
+		}
+
+		result := runSingleTest(testConfig)
+		results = append(results, result)
+
+		// Write result immediately
+		writeResult(outputWriter, result, config.Global.JSONOutput)
+
+		// Write to InfluxDB if enabled and test was successful
+		if result.Success {
+			writeResultToInfluxDB(config.Global.InfluxDB, result)
+		}
+	}
+
+	// Write summary if not in JSON mode
+	if !config.Global.JSONOutput {
+		writeSummary(outputWriter, results)
+	}
+}
+
+func runSingleTest(testConfig TestSpec) DaemonResult {
+	start := time.Now()
+
+	result := DaemonResult{
+		TestName:  testConfig.Name,
+		Timestamp: start,
+		TestType:  testConfig.Type,
+		Success:   false,
+	}
+
+	// Create a LatencyTester for this test
+	tester := &LatencyTester{
+		target4:     testConfig.Target4,
+		target6:     testConfig.Target6,
+		hostname:    testConfig.Hostname,
+		port:        testConfig.Port,
+		count:       testConfig.Count,
+		interval:    testConfig.Interval,
+		timeout:     testConfig.Timeout,
+		size:        testConfig.Size,
+		ipv4Only:    testConfig.IPv4Only,
+		ipv6Only:    testConfig.IPv6Only,
+		verbose:     false, // Disable verbose in config mode
+		dnsProtocol: testConfig.DNSProtocol,
+		dnsQuery:    testConfig.DNSQuery,
+		jsonOutput:  true, // Always use JSON for structured results
+	}
+
+	// Set protocol modes based on test type
+	switch testConfig.Type {
+	case "tcp":
+		tester.tcpMode = true
+	case "udp":
+		tester.udpMode = true
+	case "icmp":
+		tester.icmpMode = true
+	case "http", "https":
+		tester.httpMode = true
+	case "dns", "dot", "doh":
+		tester.dnsMode = true
+		if testConfig.Type == "dot" {
+			tester.dnsProtocol = "dot"
+		} else if testConfig.Type == "doh" {
+			tester.dnsProtocol = "doh"
+		}
+	case "compare":
+		tester.compareMode = true
+		if testConfig.Hostname == "" {
+			result.Error = "Compare mode requires hostname"
+			result.Duration = time.Since(start).Seconds()
+			return result
+		}
+	default:
+		tester.tcpMode = true // Default to TCP
+	}
+
+	// Set target information
+	if testConfig.Type == "compare" {
+		result.Target = testConfig.Hostname
+	} else if testConfig.IPv4Only {
+		result.Target = testConfig.Target4
+	} else if testConfig.IPv6Only {
+		result.Target = testConfig.Target6
+	} else {
+		result.Target = fmt.Sprintf("IPv4:%s IPv6:%s", testConfig.Target4, testConfig.Target6)
+	}
+
+	// Run the test
+	defer func() {
+		if r := recover(); r != nil {
+			result.Error = fmt.Sprintf("Test panicked: %v", r)
+		}
+		result.Duration = time.Since(start).Seconds()
+	}()
+
+	// Execute the test based on mode
+	if tester.compareMode {
+		// For compare mode, we need to capture the output differently
+		// We'll run a simplified version and capture statistics
+		if tester.dnsMode {
+			tester.runDNSCompareMode()
+		} else if tester.icmpMode {
+			tester.runICMPCompareMode()
+		} else if tester.httpMode {
+			tester.runHTTPCompareMode()
+		} else {
+			tester.runCompareMode()
+		}
+		result.Success = true
+		result.Results = "Compare mode completed"
+	} else {
+		// Run single protocol tests
+		if !tester.ipv4Only {
+			tester.testIPv6()
+		}
+		if !tester.ipv6Only {
+			tester.testIPv4()
+		}
+
+		// Calculate statistics
+		var stats4, stats6 Statistics
+		if len(tester.results4) > 0 {
+			stats4 = tester.calculateStats(tester.results4)
+			stats4.SuccessRate = float64(stats4.Received) / float64(stats4.Sent) * 100
+		}
+		if len(tester.results6) > 0 {
+			stats6 = tester.calculateStats(tester.results6)
+			stats6.SuccessRate = float64(stats6.Received) / float64(stats6.Sent) * 100
+		}
+
+		// Create result structure
+		testResult := struct {
+			IPv4Results Statistics `json:"ipv4_results,omitempty"`
+			IPv6Results Statistics `json:"ipv6_results,omitempty"`
+		}{
+			IPv4Results: stats4,
+			IPv6Results: stats6,
+		}
+
+		result.Results = testResult
+		result.Success = (stats4.Received > 0 || stats6.Received > 0)
+	}
+
+	return result
+}
+
+func writeResult(writer io.Writer, result DaemonResult, jsonOutput bool) {
+	if jsonOutput {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err == nil {
+			fmt.Fprintln(writer, string(data))
+		}
+	} else {
+		fmt.Fprintf(writer, "[%s] %s (%s): ",
+			result.Timestamp.Format("2006-01-02 15:04:05"),
+			result.TestName,
+			result.TestType)
+
+		if result.Success {
+			fmt.Fprintf(writer, "SUCCESS - Duration: %.2fs\n", result.Duration)
+		} else {
+			fmt.Fprintf(writer, "FAILED - %s - Duration: %.2fs\n", result.Error, result.Duration)
+		}
+	}
+}
+
+func writeSummary(writer io.Writer, results []DaemonResult) {
+	successful := 0
+	failed := 0
+	totalDuration := 0.0
+
+	for _, result := range results {
+		if result.Success {
+			successful++
+		} else {
+			failed++
+		}
+		totalDuration += result.Duration
+	}
+
+	fmt.Fprintf(writer, "\n=== Test Summary ===\n")
+	fmt.Fprintf(writer, "Total tests: %d\n", len(results))
+	fmt.Fprintf(writer, "Successful: %d\n", successful)
+	fmt.Fprintf(writer, "Failed: %d\n", failed)
+	fmt.Fprintf(writer, "Total duration: %.2fs\n", totalDuration)
+	fmt.Fprintf(writer, "Success rate: %.1f%%\n", float64(successful)/float64(len(results))*100)
+}
+
+func runDaemon(config *Config) {
+	log.Printf("Starting ProtoTester daemon with %d tests", len(config.Tests))
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Setup output file
+	var outputWriter io.Writer = os.Stdout
+	if config.Daemon.OutputFile != "" {
+		file, err := os.OpenFile(config.Daemon.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("Failed to open daemon output file: %v", err)
+		}
+		defer file.Close()
+		outputWriter = file
+	}
+
+	// Write PID file if specified
+	if config.Daemon.PidFile != "" {
+		pidFile, err := os.Create(config.Daemon.PidFile)
+		if err != nil {
+			log.Fatalf("Failed to create PID file: %v", err)
+		}
+		fmt.Fprintf(pidFile, "%d", os.Getpid())
+		pidFile.Close()
+		defer os.Remove(config.Daemon.PidFile)
+	}
+
+	// Main daemon loop
+	ticker := time.NewTicker(config.Daemon.RunInterval)
+	defer ticker.Stop()
+
+	// Run tests immediately on startup
+	log.Println("Running initial test cycle...")
+	runTestCycle(config, outputWriter)
+
+	for {
+		select {
+		case <-ticker.C:
+			log.Println("Running scheduled test cycle...")
+			runTestCycle(config, outputWriter)
+		case sig := <-sigChan:
+			log.Printf("Received signal %v, shutting down daemon...", sig)
+			return
+		}
+	}
+}
+
+func runTestCycle(config *Config, outputWriter io.Writer) {
+	results := make([]DaemonResult, 0)
+
+	for _, testConfig := range config.Tests {
+		if !testConfig.Enabled {
+			continue
+		}
+
+		retries := 0
+		var result DaemonResult
+
+		for retries <= config.Daemon.MaxRetries {
+			result = runSingleTest(testConfig)
+
+			if result.Success || retries == config.Daemon.MaxRetries {
+				break
+			}
+
+			retries++
+			log.Printf("Test %s failed (attempt %d/%d): %s",
+				testConfig.Name, retries, config.Daemon.MaxRetries+1, result.Error)
+
+			if retries <= config.Daemon.MaxRetries {
+				time.Sleep(config.Daemon.RetryInterval)
+			}
+		}
+
+		results = append(results, result)
+		writeResult(outputWriter, result, config.Global.JSONOutput)
+
+		// Write to InfluxDB if enabled and test was successful
+		if result.Success {
+			writeResultToInfluxDB(config.Global.InfluxDB, result)
+		}
+
+		// Stop on failure if configured
+		if !result.Success && config.Daemon.StopOnFailure {
+			log.Printf("Stopping daemon due to test failure: %s", result.Error)
+			return
+		}
+	}
+
+	// Write cycle summary if not in JSON mode
+	if !config.Global.JSONOutput {
+		writeSummary(outputWriter, results)
+	}
 }
