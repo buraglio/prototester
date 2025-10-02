@@ -714,7 +714,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -777,7 +777,7 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -901,7 +901,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -960,7 +960,7 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
