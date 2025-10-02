@@ -24,8 +24,8 @@ import (
 	"syscall"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	"gopkg.in/yaml.v3"
 )
 
 type PingResult struct {
@@ -36,14 +36,14 @@ type PingResult struct {
 }
 
 type JSONOutput struct {
-	Mode         string            `json:"mode"`
-	Protocol     string            `json:"protocol"`
-	Targets      map[string]string `json:"targets"`
-	IPv4Results  Statistics        `json:"ipv4_results,omitempty"`
-	IPv6Results  Statistics        `json:"ipv6_results,omitempty"`
-	Comparison   *ComparisonResult `json:"comparison,omitempty"`
-	TestConfig   TestConfig        `json:"test_config"`
-	Timestamp    time.Time         `json:"timestamp"`
+	Mode        string            `json:"mode"`
+	Protocol    string            `json:"protocol"`
+	Targets     map[string]string `json:"targets"`
+	IPv4Results Statistics        `json:"ipv4_results,omitempty"`
+	IPv6Results Statistics        `json:"ipv6_results,omitempty"`
+	Comparison  *ComparisonResult `json:"comparison,omitempty"`
+	TestConfig  TestConfig        `json:"test_config"`
+	Timestamp   time.Time         `json:"timestamp"`
 }
 
 type TestConfig struct {
@@ -146,29 +146,29 @@ type DoHQuestion struct {
 
 // Configuration file structures
 type Config struct {
-	Global GlobalConfig  `yaml:"global" json:"global"`
-	Tests  []TestSpec    `yaml:"tests" json:"tests"`
-	Daemon DaemonConfig  `yaml:"daemon" json:"daemon"`
+	Global GlobalConfig `yaml:"global" json:"global"`
+	Tests  []TestSpec   `yaml:"tests" json:"tests"`
+	Daemon DaemonConfig `yaml:"daemon" json:"daemon"`
 }
 
 type GlobalConfig struct {
-	OutputFile   string        `yaml:"output_file" json:"output_file"`
-	LogLevel     string        `yaml:"log_level" json:"log_level"`
-	DefaultCount int           `yaml:"default_count" json:"default_count"`
-	Timeout      time.Duration `yaml:"timeout" json:"timeout"`
-	Interval     time.Duration `yaml:"interval" json:"interval"`
-	JSONOutput   bool          `yaml:"json_output" json:"json_output"`
+	OutputFile   string         `yaml:"output_file" json:"output_file"`
+	LogLevel     string         `yaml:"log_level" json:"log_level"`
+	DefaultCount int            `yaml:"default_count" json:"default_count"`
+	Timeout      time.Duration  `yaml:"timeout" json:"timeout"`
+	Interval     time.Duration  `yaml:"interval" json:"interval"`
+	JSONOutput   bool           `yaml:"json_output" json:"json_output"`
 	InfluxDB     InfluxDBConfig `yaml:"influxdb" json:"influxdb"`
 }
 
 type InfluxDBConfig struct {
-	Enabled      bool   `yaml:"enabled" json:"enabled"`
-	URL          string `yaml:"url" json:"url"`
-	Token        string `yaml:"token" json:"token"`
-	Organization string `yaml:"organization" json:"organization"`
-	Bucket       string `yaml:"bucket" json:"bucket"`
-	Measurement  string `yaml:"measurement" json:"measurement"`
-	BatchSize    int    `yaml:"batch_size" json:"batch_size"`
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	URL           string        `yaml:"url" json:"url"`
+	Token         string        `yaml:"token" json:"token"`
+	Organization  string        `yaml:"organization" json:"organization"`
+	Bucket        string        `yaml:"bucket" json:"bucket"`
+	Measurement   string        `yaml:"measurement" json:"measurement"`
+	BatchSize     int           `yaml:"batch_size" json:"batch_size"`
 	FlushInterval time.Duration `yaml:"flush_interval" json:"flush_interval"`
 }
 
@@ -192,27 +192,27 @@ type TestSpec struct {
 }
 
 type DaemonConfig struct {
-	Enabled        bool          `yaml:"enabled" json:"enabled"`
-	RunInterval    time.Duration `yaml:"run_interval" json:"run_interval"`
-	OutputFile     string        `yaml:"output_file" json:"output_file"`
-	LogFile        string        `yaml:"log_file" json:"log_file"`
-	PidFile        string        `yaml:"pid_file" json:"pid_file"`
-	MaxLogSize     int64         `yaml:"max_log_size" json:"max_log_size"`
-	RotateLogs     bool          `yaml:"rotate_logs" json:"rotate_logs"`
-	StopOnFailure  bool          `yaml:"stop_on_failure" json:"stop_on_failure"`
-	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
-	RetryInterval  time.Duration `yaml:"retry_interval" json:"retry_interval"`
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	RunInterval   time.Duration `yaml:"run_interval" json:"run_interval"`
+	OutputFile    string        `yaml:"output_file" json:"output_file"`
+	LogFile       string        `yaml:"log_file" json:"log_file"`
+	PidFile       string        `yaml:"pid_file" json:"pid_file"`
+	MaxLogSize    int64         `yaml:"max_log_size" json:"max_log_size"`
+	RotateLogs    bool          `yaml:"rotate_logs" json:"rotate_logs"`
+	StopOnFailure bool          `yaml:"stop_on_failure" json:"stop_on_failure"`
+	MaxRetries    int           `yaml:"max_retries" json:"max_retries"`
+	RetryInterval time.Duration `yaml:"retry_interval" json:"retry_interval"`
 }
 
 type DaemonResult struct {
-	TestName    string      `json:"test_name"`
-	Timestamp   time.Time   `json:"timestamp"`
-	TestType    string      `json:"test_type"`
-	Target      string      `json:"target"`
-	Success     bool        `json:"success"`
-	Results     interface{} `json:"results"`
-	Error       string      `json:"error,omitempty"`
-	Duration    float64     `json:"duration_seconds"`
+	TestName  string      `json:"test_name"`
+	Timestamp time.Time   `json:"timestamp"`
+	TestType  string      `json:"test_type"`
+	Target    string      `json:"target"`
+	Success   bool        `json:"success"`
+	Results   interface{} `json:"results"`
+	Error     string      `json:"error,omitempty"`
+	Duration  float64     `json:"duration_seconds"`
 }
 
 // Global InfluxDB client
@@ -714,7 +714,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int32(lt.timeout.Nanoseconds()/1000) % 1000000,
+		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -777,7 +777,7 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int32(lt.timeout.Nanoseconds()/1000) % 1000000,
+		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -901,7 +901,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int32(lt.timeout.Nanoseconds()/1000) % 1000000,
+		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
@@ -960,7 +960,7 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	// Set socket timeout
 	tv := syscall.Timeval{
 		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int32(lt.timeout.Nanoseconds()/1000) % 1000000,
+		Usec: int64(int32(lt.timeout.Nanoseconds()/1000) % 1000000),
 	}
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
