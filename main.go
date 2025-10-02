@@ -631,7 +631,7 @@ func (lt *LatencyTester) testICMPv4(seq int) PingResult {
 	// Try unprivileged ICMP first on Linux
 	if runtime.GOOS == "linux" {
 		result := lt.tryUnprivilegedICMPv4(seq)
-		if result.Success || !strings.Contains(result.Error.Error(), "operation not permitted") {
+		if result.Success || (!strings.Contains(result.Error.Error(), "operation not permitted") && !strings.Contains(result.Error.Error(), "permission denied")) {
 			return result
 		}
 	}
@@ -818,7 +818,7 @@ func (lt *LatencyTester) testICMPv6(seq int) PingResult {
 	// Try unprivileged ICMP first on Linux
 	if runtime.GOOS == "linux" {
 		result := lt.tryUnprivilegedICMPv6(seq)
-		if result.Success || !strings.Contains(result.Error.Error(), "operation not permitted") {
+		if result.Success || (!strings.Contains(result.Error.Error(), "operation not permitted") && !strings.Contains(result.Error.Error(), "permission denied")) {
 			return result
 		}
 	}
