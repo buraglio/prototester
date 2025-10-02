@@ -689,6 +689,13 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
+	// Set socket timeout before sending
+	tv := syscall.Timeval{
+		Sec:  int64(lt.timeout.Seconds()),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
+	}
+	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+
 	// Create ICMP Echo Request packet
 	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
 	packet[0] = 8                                        // ICMP Echo Request
@@ -710,13 +717,6 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
-
-	// Set socket timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
 	// Read response
 	reply := make([]byte, 1500)
@@ -876,6 +876,13 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
+	// Set socket timeout before sending
+	tv := syscall.Timeval{
+		Sec:  int64(lt.timeout.Seconds()),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
+	}
+	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+
 	// Create ICMPv6 Echo Request packet
 	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
 	packet[0] = 128                                      // ICMPv6 Echo Request
@@ -897,13 +904,6 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
-
-	// Set socket timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
 	// Read response
 	reply := make([]byte, 1500)
