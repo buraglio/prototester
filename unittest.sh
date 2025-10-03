@@ -98,92 +98,92 @@ echo
 # Basic functionality tests
 echo -e "${YELLOW}=== Basic Functionality Tests ===${NC}"
 
-run_test "Help output" "go run main.go -h" "Usage of"
-run_test "Default TCP mode (IPv4 only)" "go run main.go -4only -c 2" "High-Fidelity IPv4/IPv6 Latency Tester"
-run_test "Default TCP mode (IPv6 only)" "go run main.go -6only -c 2" "High-Fidelity IPv4/IPv6 Latency Tester"
-run_test "Verbose output" "go run main.go -4only -c 2 -v" "IPv4 test"
+run_test "Help output" "go run . -h" "Usage of"
+run_test "Default TCP mode (IPv4 only)" "go run . -4only -c 2" "High-Fidelity IPv4/IPv6 Latency Tester"
+run_test "Default TCP mode (IPv6 only)" "go run . -6only -c 2" "High-Fidelity IPv4/IPv6 Latency Tester"
+run_test "Verbose output" "go run . -4only -c 2 -v" "IPv4 test"
 
 echo
 
 # Protocol-specific tests
 echo -e "${YELLOW}=== Protocol-Specific Tests ===${NC}"
 
-run_test "TCP mode explicit" "go run main.go -t -4only -c 2" "TCP"
-run_test "UDP mode" "go run main.go -u -4only -c 2" "UDP"
-run_test "ICMP mode (with fallback)" "go run main.go -icmp -4only -c 2" "ICMP"
-run_test "HTTP mode (port 80)" "go run main.go -http -p 80 -4 google.com -c 2" "HTTP"
-run_test "HTTPS mode (port 443)" "go run main.go -http -p 443 -4 google.com -c 2" "HTTPS"
-run_test "DNS UDP mode" "go run main.go -dns -4only -c 2" "DNS"
-run_test "DNS TCP mode" "go run main.go -dns -dns-protocol tcp -4only -c 2" "DNS"
+run_test "TCP mode explicit" "go run . -t -4only -c 2" "TCP"
+run_test "UDP mode" "go run . -u -4only -c 2" "UDP"
+run_test "ICMP mode (with fallback)" "go run . -icmp -4only -c 2" "ICMP"
+run_test "HTTP mode (port 80)" "go run . -http -p 80 -4 google.com -c 2" "HTTP"
+run_test "HTTPS mode (port 443)" "go run . -http -p 443 -4 google.com -c 2" "HTTPS"
+run_test "DNS UDP mode" "go run . -dns -4only -c 2" "DNS"
+run_test "DNS TCP mode" "go run . -dns -dns-protocol tcp -4only -c 2" "DNS"
 
 echo
 
 # Port and configuration tests
 echo -e "${YELLOW}=== Configuration Tests ===${NC}"
 
-run_test "Custom port" "go run main.go -t -p 80 -4only -c 2" "port"
-run_test "Custom packet count" "go run main.go -4only -c 3" "3 sent"
-run_test "Custom interval" "go run main.go -4only -c 2 -i 500ms" "Latency Tester"
-run_test "Custom timeout" "go run main.go -4only -c 2 -timeout 5s" "Latency Tester"
-run_test "Custom ICMP size" "go run main.go -icmp -s 128 -4only -c 2" "ICMP"
+run_test "Custom port" "go run . -t -p 80 -4only -c 2" ":80"
+run_test "Custom packet count" "go run . -4only -c 3" "3 sent"
+run_test "Custom interval" "go run . -4only -c 2 -i 500ms" "Latency Tester"
+run_test "Custom timeout" "go run . -4only -c 2 -timeout 5s" "Latency Tester"
+run_test "Custom ICMP size" "go run . -icmp -s 128 -4only -c 2" "ICMP"
 
 echo
 
 # DNS-specific tests
 echo -e "${YELLOW}=== DNS Protocol Tests ===${NC}"
 
-run_test "DNS UDP" "go run main.go -dns -dns-protocol udp -4only -c 2" "DNS.*UDP"
-run_test "DNS TCP" "go run main.go -dns -dns-protocol tcp -4only -c 2" "DNS.*TCP"
-run_test "Custom DNS query" "go run main.go -dns -dns-query google.com -4only -c 2" "google.com"
+run_test "DNS UDP" "go run . -dns -dns-protocol udp -4only -c 2" "DNS.*UDP"
+run_test "DNS TCP" "go run . -dns -dns-protocol tcp -4only -c 2" "DNS.*TCP"
+run_test "Custom DNS query" "go run . -dns -dns-query google.com -4only -c 2" "google.com"
 
 echo
 
 # Compare mode tests
 echo -e "${YELLOW}=== Compare Mode Tests ===${NC}"
 
-run_test "Compare TCP/UDP mode" "go run main.go -compare google.com -c 2" "COMPREHENSIVE COMPARISON RESULTS" 15
-run_test "Compare DNS mode" "go run main.go -compare dns.google -dns -c 2" "DNS.*COMPARISON RESULTS" 15
-run_test "Compare HTTP mode" "go run main.go -compare google.com -http -p 80 -c 2" "HTTP.*COMPARISON RESULTS" 15
-run_test "Compare ICMP mode" "go run main.go -compare google.com -icmp -c 2" "ICMP COMPARISON RESULTS" 15
+run_test "Compare TCP/UDP mode" "go run . -compare google.com -c 2" "COMPREHENSIVE COMPARISON RESULTS" 30
+run_test "Compare DNS mode" "go run . -compare dns.google -dns -c 2" "DNS.*COMPARISON RESULTS" 15
+run_test "Compare HTTP mode" "go run . -compare google.com -http -p 80 -c 2" "HTTP.*COMPARISON RESULTS" 15
+run_test "Compare ICMP mode" "go run . -compare google.com -icmp -c 2" "ICMP COMPARISON RESULTS" 15
 
 echo
 
 # JSON output tests
 echo -e "${YELLOW}=== JSON Output Tests ===${NC}"
 
-run_json_test "JSON single mode" "go run main.go -json -4only -c 2"
-run_json_test "JSON TCP mode" "go run main.go -t -json -4only -c 2"
-run_json_test "JSON UDP mode" "go run main.go -u -json -4only -c 2"
-run_json_test "JSON DNS mode" "go run main.go -dns -json -4only -c 2"
-run_json_test "JSON HTTP mode" "go run main.go -http -p 80 -4 google.com -json -c 2"
-run_json_test "JSON compare mode" "go run main.go -compare google.com -json -c 2" 15
+run_json_test "JSON single mode" "go run . -json -4only -c 2"
+run_json_test "JSON TCP mode" "go run . -t -json -4only -c 2"
+run_json_test "JSON UDP mode" "go run . -u -json -4only -c 2"
+run_json_test "JSON DNS mode" "go run . -dns -json -4only -c 2"
+run_json_test "JSON HTTP mode" "go run . -http -p 80 -4 google.com -json -c 2"
+run_json_test "JSON compare mode" "go run . -compare google.com -json -c 2" 30
 
 echo
 
 # Target specification tests
 echo -e "${YELLOW}=== Target Specification Tests ===${NC}"
 
-run_test "Custom IPv4 target" "go run main.go -4 1.1.1.1 -4only -c 2" "1.1.1.1"
-run_test "Custom IPv6 target" "go run main.go -6 2606:4700:4700::1111 -6only -c 2" "2606:4700:4700::1111"
-run_test "Both protocols with defaults" "go run main.go -c 2" "IPv4.*IPv6"
+run_test "Custom IPv4 target" "go run . -4 1.1.1.1 -4only -c 2" "1.1.1.1"
+run_test "Custom IPv6 target" "go run . -6 2606:4700:4700::1111 -6only -c 2" "2606:4700:4700::1111"
+run_test "Both protocols with defaults" "go run . -c 2" "IPv4.*IPv6"
 
 echo
 
 # Error condition tests
 echo -e "${YELLOW}=== Error Condition Tests ===${NC}"
 
-run_test "Multiple protocol flags error" "go run main.go -t -u -c 1 2>&1 || true" "Cannot specify multiple protocol flags"
-run_test "Invalid DNS protocol error" "go run main.go -dns -dns-protocol invalid 2>&1 || true" "Invalid DNS protocol"
-run_test "Compare with explicit flags error" "go run main.go -compare google.com -t 2>&1 || true" "Compare mode cannot be used"
+run_test "Multiple protocol flags error" "go run . -t -u -c 1 2>&1 || true" "Cannot specify multiple protocol flags"
+run_test "Invalid DNS protocol error" "go run . -dns -dns-protocol invalid 2>&1 || true" "Invalid DNS protocol"
+run_test "Compare with explicit flags error" "go run . -compare google.com -t 2>&1 || true" "Compare mode cannot be used"
 
 echo
 
 # Edge case tests
 echo -e "${YELLOW}=== Edge Case Tests ===${NC}"
 
-run_test "Very short test count" "go run main.go -4only -c 1" "1 sent"
-run_test "DNS with custom port" "go run main.go -dns -p 8053 -4only -c 2" "8053"
-run_test "HTTP with custom port" "go run main.go -http -p 8080 -4 httpbin.org -c 2" "8080" 15
+run_test "Very short test count" "go run . -4only -c 1" "1 sent"
+run_test "DNS with custom port" "go run . -dns -p 8053 -4only -c 2" "8053"
+run_test "HTTP with custom port" "go run . -http -p 8080 -4 httpbin.org -c 2" "8080" 15
 
 echo
 
