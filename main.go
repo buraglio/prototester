@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -628,17 +627,24 @@ func (lt *LatencyTester) testIPv6() {
 }
 
 func (lt *LatencyTester) testICMPv4(seq int) PingResult {
-	// TODO: Unprivileged ICMP on Linux requires more investigation
-	// Skipping for now and using raw sockets directly
-
-	// Try raw socket ICMP
-	result := lt.tryRawICMPv4(seq)
+	// Try unprivileged ICMP first (Linux SOCK_DGRAM ICMP)
+	result := lt.tryUnprivilegedICMPv4(seq)
 	if result.Success {
 		return result
 	}
 
+	// If unprivileged fails, try raw socket ICMP
+	if strings.Contains(result.Error.Error(), "operation not permitted") ||
+	   strings.Contains(result.Error.Error(), "permission denied") {
+		result = lt.tryRawICMPv4(seq)
+		if result.Success {
+			return result
+		}
+	}
+
 	// If ICMP fails due to permissions, fall back to TCP
-	if strings.Contains(result.Error.Error(), "operation not permitted") {
+	if strings.Contains(result.Error.Error(), "operation not permitted") ||
+	   strings.Contains(result.Error.Error(), "permission denied") {
 		if lt.verbose {
 			fmt.Printf("ICMP failed (no root), falling back to TCP connect test...\n")
 		}
@@ -710,21 +716,31 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
-	// Use select to wait for response with timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-
 	// Read response
 	reply := make([]byte, 1500)
+	deadline := start.Add(lt.timeout)
+
 	for {
+		// Calculate remaining timeout
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
+		}
+
 		// Wait for socket to be readable
 		fdSet := &syscall.FdSet{}
 		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 
+		tv := syscall.Timeval{
+			Sec:  int64(remaining.Seconds()),
+			Usec: int64(remaining.Nanoseconds()/1000) % 1000000,
+		}
+
 		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
 		if err != nil {
+			if err == syscall.EINTR {
+				continue // Retry on interrupted system call
+			}
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
 		if n == 0 {
@@ -743,10 +759,11 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 
 		// Check if it's an ICMP Echo Reply
 		if reply[0] == 0 { // ICMP Echo Reply
-			replyID := binary.BigEndian.Uint16(reply[4:6])
 			replySeq := binary.BigEndian.Uint16(reply[6:8])
 
-			if int(replyID) == pid && int(replySeq) == seq {
+			// For unprivileged sockets, the kernel manages the ID field
+			// We only need to match the sequence number
+			if int(replySeq) == seq {
 				latency := time.Since(start)
 				return PingResult{Success: true, Latency: latency, Timestamp: start}
 			}
@@ -825,17 +842,24 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 }
 
 func (lt *LatencyTester) testICMPv6(seq int) PingResult {
-	// TODO: Unprivileged ICMP on Linux requires more investigation
-	// Skipping for now and using raw sockets directly
-
-	// Try raw socket ICMP
-	result := lt.tryRawICMPv6(seq)
+	// Try unprivileged ICMP first (Linux SOCK_DGRAM ICMPv6)
+	result := lt.tryUnprivilegedICMPv6(seq)
 	if result.Success {
 		return result
 	}
 
+	// If unprivileged fails, try raw socket ICMP
+	if strings.Contains(result.Error.Error(), "operation not permitted") ||
+	   strings.Contains(result.Error.Error(), "permission denied") {
+		result = lt.tryRawICMPv6(seq)
+		if result.Success {
+			return result
+		}
+	}
+
 	// If ICMP fails due to permissions, fall back to TCP
-	if strings.Contains(result.Error.Error(), "operation not permitted") {
+	if strings.Contains(result.Error.Error(), "operation not permitted") ||
+	   strings.Contains(result.Error.Error(), "permission denied") {
 		if lt.verbose {
 			fmt.Printf("ICMP failed (no root), falling back to TCP connect test...\n")
 		}
@@ -907,21 +931,31 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
-	// Use select to wait for response with timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-
 	// Read response
 	reply := make([]byte, 1500)
+	deadline := start.Add(lt.timeout)
+
 	for {
+		// Calculate remaining timeout
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
+		}
+
 		// Wait for socket to be readable
 		fdSet := &syscall.FdSet{}
 		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 
+		tv := syscall.Timeval{
+			Sec:  int64(remaining.Seconds()),
+			Usec: int64(remaining.Nanoseconds()/1000) % 1000000,
+		}
+
 		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
 		if err != nil {
+			if err == syscall.EINTR {
+				continue // Retry on interrupted system call
+			}
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
 		if n == 0 {
@@ -940,10 +974,11 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 
 		// Check if it's an ICMPv6 Echo Reply
 		if reply[0] == 129 { // ICMPv6 Echo Reply
-			replyID := binary.BigEndian.Uint16(reply[4:6])
 			replySeq := binary.BigEndian.Uint16(reply[6:8])
 
-			if int(replyID) == pid && int(replySeq) == seq {
+			// For unprivileged sockets, the kernel manages the ID field
+			// We only need to match the sequence number
+			if int(replySeq) == seq {
 				latency := time.Since(start)
 				return PingResult{Success: true, Latency: latency, Timestamp: start}
 			}
@@ -1586,10 +1621,6 @@ func (lt *LatencyTester) runCompareMode() {
 		log.Fatal("No IPv6 address found - cannot perform comparison")
 	}
 
-	// Override count to 10 for comparison mode
-	originalCount := lt.count
-	lt.count = 10
-
 	result := &ComparisonResult{
 		ResolvedIPv4: ipv4,
 		ResolvedIPv6: ipv6,
@@ -1625,9 +1656,6 @@ func (lt *LatencyTester) runCompareMode() {
 	fmt.Printf("Testing UDP IPv4 (%s:%d)...\n", ipv4, lt.port)
 	lt.testIPv4()
 	result.UDPv4Stats = lt.calculateStats(lt.results4)
-
-	// Restore original count
-	lt.count = originalCount
 
 	// Calculate scores and determine winner
 	lt.calculateComparisonScores(result)
@@ -1669,10 +1697,6 @@ func (lt *LatencyTester) runDNSCompareMode() {
 		log.Fatal("No IPv6 address found - cannot perform DNS comparison")
 	}
 
-	// Override count to 10 for comparison mode
-	originalCount := lt.count
-	lt.count = 10
-
 	// Store original mode states
 	originalTcpMode := lt.tcpMode
 	originalUdpMode := lt.udpMode
@@ -1697,7 +1721,6 @@ func (lt *LatencyTester) runDNSCompareMode() {
 	dnsv4Stats := lt.calculateStats(lt.results4)
 
 	// Restore original settings
-	lt.count = originalCount
 	lt.tcpMode = originalTcpMode
 	lt.udpMode = originalUdpMode
 
@@ -2248,10 +2271,6 @@ func (lt *LatencyTester) runICMPCompareMode() {
 		log.Fatal("No IPv6 address found - cannot perform comparison")
 	}
 
-	// Override count to 10 for comparison mode
-	originalCount := lt.count
-	lt.count = 10
-
 	result := &ComparisonResult{
 		ResolvedIPv4: ipv4,
 		ResolvedIPv6: ipv6,
@@ -2287,7 +2306,6 @@ func (lt *LatencyTester) runICMPCompareMode() {
 	result.ICMPv4Stats = lt.calculateStats(lt.results4)
 
 	// Restore original settings
-	lt.count = originalCount
 	lt.tcpMode = originalTcpMode
 	lt.udpMode = originalUdpMode
 	lt.dnsMode = originalDnsMode
@@ -2329,10 +2347,6 @@ func (lt *LatencyTester) runHTTPCompareMode() {
 		log.Fatal("No IPv6 address found - cannot perform comparison")
 	}
 
-	// Override count to 10 for comparison mode
-	originalCount := lt.count
-	lt.count = 10
-
 	result := &ComparisonResult{
 		ResolvedIPv4: ipv4,
 		ResolvedIPv6: ipv6,
@@ -2370,7 +2384,6 @@ func (lt *LatencyTester) runHTTPCompareMode() {
 	result.HTTPv4Stats = lt.calculateStats(lt.results4)
 
 	// Restore original settings
-	lt.count = originalCount
 	lt.tcpMode = originalTcpMode
 	lt.udpMode = originalUdpMode
 	lt.icmpMode = originalIcmpMode
