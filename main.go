@@ -710,7 +710,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
 	// Send packet (socket is already connected)
-	err := syscall.Send(fd, packet, 0)
+	_, err := syscall.Write(fd, packet)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
@@ -912,7 +912,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
 	// Send packet (socket is already connected)
-	err := syscall.Send(fd, packet, 0)
+	_, err := syscall.Write(fd, packet)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
