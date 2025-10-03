@@ -26,6 +26,7 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 - Network connectivity to test targets
 - **No special privileges required for default operation**
 - Optional: Root/Administrator privileges for true ICMP testing
+- **Cross-Platform**: Fully supports Linux and macOS
 
 ## Installation
 
@@ -33,8 +34,10 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 git clone <repository>
 cd prototester
 go mod tidy
-go build -o prototester main.go
+go build -o prototester
 ```
+
+**Important**: Use `go build -o prototester` (not `go build -o prototester main.go`) to ensure platform-specific files are included in the build.
 
 ## Quick Start
 
@@ -214,12 +217,21 @@ sudo ./prototester -icmp
 - **UDP Mode**: Works without root (uses connected UDP sockets) ✅
 - **HTTP Mode**: Works without root ✅
 - **DNS Mode**: Works without root (all DNS protocols) ✅
+- **ICMP Mode on Linux**: Works without root on modern Linux kernels (unprivileged ICMP) ✅
 
 ### ICMP Mode Behavior (Smart Fallback)
-1. **Linux**: First tries unprivileged ICMP sockets (`SOCK_DGRAM`)
-2. **All Systems**: Falls back to raw sockets (requires root)
-3. **Final Fallback**: If ICMP fails due to permissions, automatically uses TCP
-4. **Verbose Feedback**: Shows "ICMP failed (no root), falling back to TCP connect test..."
+1. **Linux Unprivileged ICMP** (First attempt - no root needed):
+   - Uses `SOCK_DGRAM` + `IPPROTO_ICMP/IPPROTO_ICMPV6`
+   - Available on Linux kernels with unprivileged ICMP support
+   - Kernel automatically manages ICMP packet ID field
+   - Works on most modern Linux distributions out of the box
+2. **Raw Socket ICMP** (Second attempt - requires root):
+   - Falls back to `SOCK_RAW` if unprivileged fails
+   - Requires root/administrator privileges
+   - Full control over ICMP packet structure
+3. **TCP Fallback** (Final fallback):
+   - If both ICMP methods fail, automatically uses TCP connect
+   - Verbose mode shows: "ICMP failed (no root), falling back to TCP connect test..."
 
 ### Running with Root (Optional)
 ```bash
@@ -228,6 +240,9 @@ sudo ./prototester -icmp
 
 # Root enables raw socket ICMP with larger packets
 sudo ./prototester -icmp -s 1400 -v
+
+# Note: On modern Linux, root is NOT required for basic ICMP
+./prototester -icmp  # Works without sudo on Linux!
 ```
 
 ## Sample Output
@@ -1124,11 +1139,18 @@ from(bucket: "network-monitoring")
 - Useful for testing services like DNS
 
 #### ICMP Mode (Smart Implementation)
-- **Linux**: First tries unprivileged ICMP sockets (`SOCK_DGRAM` with `IPPROTO_ICMP`)
-- **Fallback**: Uses raw ICMP sockets (requires root)
-- **Final Fallback**: Automatic TCP mode if permissions insufficient
+- **Linux Unprivileged ICMP**: Automatically tries `SOCK_DGRAM` ICMP sockets first (no root required on modern Linux)
+  - Uses `syscall.Connect()` and `syscall.Write()` for packet transmission
+  - Kernel manages ICMP ID field automatically
+  - Only sequence number matching required for replies
+- **Cross-Platform Support**: Platform-specific implementations for Linux and macOS
+  - Uses build tags to handle different `syscall.Select()` signatures
+  - Handles `syscall.Timeval` type differences across platforms
+- **Raw Socket Fallback**: Uses raw ICMP sockets when unprivileged fails (requires root)
+- **TCP Fallback**: Automatic TCP mode if all ICMP methods fail
+- **EINTR Handling**: Properly handles interrupted system calls with retry logic
 - Provides pure network-level latency without application overhead
-- Implements proper ICMP Echo Request/Reply handling for both protocols
+- Implements proper ICMP Echo Request/Reply handling for both IPv4 and IPv6
 
 #### HTTP/HTTPS Mode
 - Uses HTTP HEAD requests to minimize data transfer

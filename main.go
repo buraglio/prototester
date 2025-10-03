@@ -731,23 +731,20 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 		fdSet := &syscall.FdSet{}
 		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 
-		tv := syscall.Timeval{
-			Sec:  int64(remaining.Seconds()),
-			Usec: int64(remaining.Nanoseconds()/1000) % 1000000,
-		}
+		tv := syscall.NsecToTimeval(remaining.Nanoseconds())
 
-		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+		ready, err := selectWithTimeout(fd, fdSet, &tv)
 		if err != nil {
 			if err == syscall.EINTR {
 				continue // Retry on interrupted system call
 			}
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
-		if n == 0 {
+		if !ready {
 			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
 		}
 
-		n, _, err = syscall.Recvfrom(fd, reply, 0)
+		n, _, err := syscall.Recvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -802,10 +799,7 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	}
 
 	// Set socket timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
+	tv := syscall.NsecToTimeval(lt.timeout.Nanoseconds())
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
 	// Read response
@@ -946,23 +940,20 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 		fdSet := &syscall.FdSet{}
 		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
 
-		tv := syscall.Timeval{
-			Sec:  int64(remaining.Seconds()),
-			Usec: int64(remaining.Nanoseconds()/1000) % 1000000,
-		}
+		tv := syscall.NsecToTimeval(remaining.Nanoseconds())
 
-		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+		ready, err := selectWithTimeout(fd, fdSet, &tv)
 		if err != nil {
 			if err == syscall.EINTR {
 				continue // Retry on interrupted system call
 			}
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
-		if n == 0 {
+		if !ready {
 			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
 		}
 
-		n, _, err = syscall.Recvfrom(fd, reply, 0)
+		n, _, err := syscall.Recvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -1013,10 +1004,7 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	}
 
 	// Set socket timeout
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
+	tv := syscall.NsecToTimeval(lt.timeout.Nanoseconds())
 	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
 
 	// Read response
