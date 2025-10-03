@@ -689,13 +689,6 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
-	// Set socket timeout before sending
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-
 	// Create ICMP Echo Request packet
 	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMP header + data
 	packet[0] = 8                                        // ICMP Echo Request
@@ -718,10 +711,28 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
+	// Use select to wait for response with timeout
+	tv := syscall.Timeval{
+		Sec:  int64(lt.timeout.Seconds()),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
+	}
+
 	// Read response
 	reply := make([]byte, 1500)
 	for {
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		// Wait for socket to be readable
+		fdSet := &syscall.FdSet{}
+		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+
+		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+		if err != nil {
+			return PingResult{Success: false, Error: err, Timestamp: start}
+		}
+		if n == 0 {
+			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
+		}
+
+		n, _, err = syscall.Recvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -876,13 +887,6 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
-	// Set socket timeout before sending
-	tv := syscall.Timeval{
-		Sec:  int64(lt.timeout.Seconds()),
-		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
-	}
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-
 	// Create ICMPv6 Echo Request packet
 	packet := make([]byte, 8+lt.size)                    // 8 bytes ICMPv6 header + data
 	packet[0] = 128                                      // ICMPv6 Echo Request
@@ -905,10 +909,28 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
+	// Use select to wait for response with timeout
+	tv := syscall.Timeval{
+		Sec:  int64(lt.timeout.Seconds()),
+		Usec: int64(lt.timeout.Nanoseconds()/1000) % 1000000,
+	}
+
 	// Read response
 	reply := make([]byte, 1500)
 	for {
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		// Wait for socket to be readable
+		fdSet := &syscall.FdSet{}
+		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+
+		n, err := syscall.Select(fd+1, fdSet, nil, nil, &tv)
+		if err != nil {
+			return PingResult{Success: false, Error: err, Timestamp: start}
+		}
+		if n == 0 {
+			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
+		}
+
+		n, _, err = syscall.Recvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
