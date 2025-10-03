@@ -682,6 +682,14 @@ func (lt *LatencyTester) tryUnprivilegedICMPv4(seq int) PingResult {
 		return PingResult{Success: false, Error: fmt.Errorf("error resolving IPv4 address: %v", err), Timestamp: time.Now()}
 	}
 
+	// Connect the socket to the destination
+	addr := &syscall.SockaddrInet4{}
+	copy(addr.Addr[:], dst.IP.To4())
+	err = syscall.Connect(fd, addr)
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("error connecting socket: %v", err), Timestamp: time.Now()}
+	}
+
 	return lt.sendICMPv4Unprivileged(fd, dst, seq)
 }
 
@@ -701,12 +709,8 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
-	// Create destination address structure
-	addr := &syscall.SockaddrInet4{}
-	copy(addr.Addr[:], dst.IP.To4())
-
-	// Send packet
-	err := syscall.Sendto(fd, packet, 0, addr)
+	// Send packet (socket is already connected)
+	err := syscall.Send(fd, packet, 0)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
@@ -880,6 +884,14 @@ func (lt *LatencyTester) tryUnprivilegedICMPv6(seq int) PingResult {
 		return PingResult{Success: false, Error: fmt.Errorf("error resolving IPv6 address: %v", err), Timestamp: time.Now()}
 	}
 
+	// Connect the socket to the destination
+	addr := &syscall.SockaddrInet6{}
+	copy(addr.Addr[:], dst.IP.To16())
+	err = syscall.Connect(fd, addr)
+	if err != nil {
+		return PingResult{Success: false, Error: fmt.Errorf("error connecting socket: %v", err), Timestamp: time.Now()}
+	}
+
 	return lt.sendICMPv6Unprivileged(fd, dst, seq)
 }
 
@@ -899,12 +911,8 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	// Fill data with timestamp for verification
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
-	// Create destination address structure
-	addr := &syscall.SockaddrInet6{}
-	copy(addr.Addr[:], dst.IP.To16())
-
-	// Send packet
-	err := syscall.Sendto(fd, packet, 0, addr)
+	// Send packet (socket is already connected)
+	err := syscall.Send(fd, packet, 0)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
