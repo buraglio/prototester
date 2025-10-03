@@ -628,13 +628,8 @@ func (lt *LatencyTester) testIPv6() {
 }
 
 func (lt *LatencyTester) testICMPv4(seq int) PingResult {
-	// Try unprivileged ICMP first on Linux
-	if runtime.GOOS == "linux" {
-		result := lt.tryUnprivilegedICMPv4(seq)
-		if result.Success || (!strings.Contains(result.Error.Error(), "operation not permitted") && !strings.Contains(result.Error.Error(), "permission denied")) {
-			return result
-		}
-	}
+	// TODO: Unprivileged ICMP on Linux requires more investigation
+	// Skipping for now and using raw sockets directly
 
 	// Try raw socket ICMP
 	result := lt.tryRawICMPv4(seq)
@@ -830,13 +825,8 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 }
 
 func (lt *LatencyTester) testICMPv6(seq int) PingResult {
-	// Try unprivileged ICMP first on Linux
-	if runtime.GOOS == "linux" {
-		result := lt.tryUnprivilegedICMPv6(seq)
-		if result.Success || (!strings.Contains(result.Error.Error(), "operation not permitted") && !strings.Contains(result.Error.Error(), "permission denied")) {
-			return result
-		}
-	}
+	// TODO: Unprivileged ICMP on Linux requires more investigation
+	// Skipping for now and using raw sockets directly
 
 	// Try raw socket ICMP
 	result := lt.tryRawICMPv6(seq)
