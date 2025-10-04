@@ -20,6 +20,156 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 - **InfluxDB Integration**: Optional time-series database integration for long-term metrics storage and monitoring
 - **Flexible Configuration**: Customizable targets, connection count, intervals, timeouts, and ports
 
+## How Performance Comparison and Scoring Works
+
+ProtoTester uses a reasonably sophisticated scoring algorithm to compare network performance across different protocols and IP versions. Understanding how the metrics are calculated and combined helps interpret the results effectively.
+
+### Core Metrics
+
+#### 1. Latency (Round-Trip Time)
+- **Measurement**: Time taken for a packet/request to reach the destination and return
+- **Precision**: Nanosecond-level timing for maximum accuracy
+- **Statistics Provided**:
+  - **Minimum**: Fastest observed latency (best-case performance)
+  - **Maximum**: Slowest observed latency (worst-case performance)
+  - **Average**: Mean latency across all tests (typical performance)
+  - **Standard Deviation**: Variability in latency measurements
+  - **Percentiles**: P50 (median), P95, P99 for distribution analysis
+
+#### 2. Jitter
+- **Definition**: Variation in latency between consecutive packets
+- **Calculation**: Average absolute difference between consecutive latencies
+  ```
+  jitter = Σ|latency[i] - latency[i-1]| / (n-1)
+  ```
+- **Impact**: High jitter indicates unstable network conditions
+- **Importance**: Critical for real-time applications (VoIP, video conferencing, gaming)
+
+#### 3. Availability (Success Rate)
+- **Calculation**: `(successful_tests / total_tests) × 100`
+- **Range**: 0% (complete failure) to 100% (perfect reliability)
+- **Impact**: Directly affects the performance score
+
+### Performance Scoring Algorithm
+
+The scoring system combines **availability** and **latency** to produce a single performance metric.
+
+#### Basic Score Formula
+
+For each protocol and IP version:
+```
+score = success_rate × (1000 / avg_latency_ms)
+```
+
+**How it works**:
+- **Success Rate Component**: Fraction of successful tests (0.0 to 1.0)
+  - 100% success rate = 1.0 multiplier
+  - 50% success rate = 0.5 multiplier (score is halved)
+  - 0% success rate = 0.0 (zero score)
+
+- **Latency Component**: `1000 / avg_latency_ms`
+  - Lower latency = higher score
+  - 10ms average latency: `1000/10 = 100` points
+  - 100ms average latency: `1000/100 = 10` points
+  - The constant 1000 provides score normalization
+
+**Example Calculation**:
+- Test with 100% success rate and 10ms average latency:
+  ```
+  score = 1.0 × (1000 / 10) = 100.0
+  ```
+- Test with 80% success rate and 20ms average latency:
+  ```
+  score = 0.8 × (1000 / 20) = 40.0
+  ```
+
+#### Multi-Protocol Compare Mode Scoring
+
+When using `-compare` mode (default TCP/UDP comparison), the final score is a **weighted combination**:
+
+```
+IPv4 Score = (TCP_IPv4_score × 0.6) + (UDP_IPv4_score × 0.4)
+IPv6 Score = (TCP_IPv6_score × 0.6) + (UDP_IPv6_score × 0.4)
+```
+
+**Weighting Rationale**:
+- **TCP: 60%** - Most internet traffic uses TCP, making it more representative of real-world performance
+- **UDP: 40%** - Important for real-time services (DNS, VoIP, streaming, gaming)
+
+**Example**:
+```
+TCP IPv4: 100% success, 15ms avg → score = 1.0 × (1000/15) = 66.67
+UDP IPv4: 100% success, 25ms avg → score = 1.0 × (1000/25) = 40.00
+IPv4 Final Score = (66.67 × 0.6) + (40.00 × 0.4) = 40.00 + 16.00 = 56.00
+
+TCP IPv6: 100% success, 12ms avg → score = 1.0 × (1000/12) = 83.33
+UDP IPv6: 100% success, 20ms avg → score = 1.0 × (1000/20) = 50.00
+IPv6 Final Score = (83.33 × 0.6) + (50.00 × 0.4) = 50.00 + 20.00 = 70.00
+
+Winner: IPv6 (25% better)
+Percentage Difference = ((70.00 - 56.00) / 56.00) × 100 = 25%
+```
+
+#### Protocol-Specific Compare Modes
+
+When using `-compare` with specific protocols (`-icmp`, `-http`, `-dns`), only that protocol is tested:
+
+```
+score = success_rate × (1000 / avg_latency_ms)
+```
+
+No weighting is applied - the direct protocol comparison determines the winner.
+
+### Interpreting Results
+
+#### Score Comparison
+- **Higher Score = Better Performance**: Combines speed and reliability
+- **Winner Determination**: The IP version with the higher score wins
+- **Percentage Difference**: Shows how much better the winner performed
+  ```
+  percentage = ((winner_score - loser_score) / loser_score) × 100
+  ```
+
+#### What the Metrics Tell You
+
+**Latency**:
+- **< 10ms**: Excellent (local/regional network)
+- **10-50ms**: Good (typical internet performance)
+- **50-100ms**: Moderate (acceptable for most applications)
+- **> 100ms**: High (may affect real-time applications)
+
+**Jitter**:
+- **< 5ms**: Excellent (stable connection)
+- **5-20ms**: Good (minor variations)
+- **20-50ms**: Moderate (noticeable in real-time apps)
+- **> 50ms**: Poor (unstable, affects quality)
+
+**Success Rate**:
+- **100%**: Perfect reliability
+- **95-99%**: Excellent (minor packet loss)
+- **90-95%**: Good (some packet loss)
+- **< 90%**: Poor (significant reliability issues)
+
+### Example Output Interpretation
+
+```
+Overall Performance Ranking
+----------------------------------------
+IPv6 Score: 31.17
+IPv4 Score: 24.38
+
+Winner: IPv6 (27.9% better)
+
+Scoring: Based on success rate and latency (lower latency + higher success = higher score)
+Weighting: TCP 60%, UDP 40%
+```
+
+**Analysis**:
+- IPv6 scored 31.17 vs IPv4's 24.38
+- IPv6 is 27.9% better overall
+- Both success rate and latency contribute to this difference
+- TCP performance (60% weight) has more influence than UDP (40% weight)
+
 ## Requirements
 
 - Go 1.21 or higher
