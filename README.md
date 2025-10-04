@@ -31,7 +31,7 @@ A comprehensive Go program that tests IPv4 and IPv6 connectivity and performance
 ## Installation
 
 ```bash
-git clone <repository>
+git clone https://github.com/buraglio/prototester.git
 cd prototester
 go mod tidy
 go build -o prototester
