@@ -176,7 +176,7 @@ Weighting: TCP 60%, UDP 40%
 - Network connectivity to test targets
 - **No special privileges required for default operation**
 - Optional: Root/Administrator privileges for true ICMP testing
-- **Cross-Platform**: Fully supports Linux and macOS
+- **Cross-Platform**: Fully supports Linux, macOS, and Windows
 
 ## Installation
 
@@ -187,7 +187,20 @@ go mod tidy
 go build -o prototester
 ```
 
+### Platform-Specific Builds
+
 **Important**: Use `go build -o prototester` (not `go build -o prototester main.go`) to ensure platform-specific files are included in the build.
+
+```bash
+# macOS
+go build -o prototester
+
+# Linux
+GOOS=linux GOARCH=amd64 go build -o prototester-linux
+
+# Windows
+GOOS=windows GOARCH=amd64 go build -o prototester.exe
+```
 
 ## Quick Start
 
@@ -1293,10 +1306,11 @@ from(bucket: "network-monitoring")
   - Uses `syscall.Connect()` and `syscall.Write()` for packet transmission
   - Kernel manages ICMP ID field automatically
   - Only sequence number matching required for replies
-- **Cross-Platform Support**: Platform-specific implementations for Linux and macOS
-  - Uses build tags to handle different `syscall.Select()` signatures
-  - Handles `syscall.Timeval` type differences across platforms
-- **Raw Socket Fallback**: Uses raw ICMP sockets when unprivileged fails (requires root)
+- **Cross-Platform Support**: Platform-specific implementations for Linux, macOS, and Windows
+  - Uses build tags to handle different syscall interfaces across platforms
+  - Platform-specific socket descriptor types (int on Unix, Handle on Windows)
+  - Abstracts platform differences in select(), socket timeout, and I/O operations
+- **Raw Socket Fallback**: Uses raw ICMP sockets when unprivileged fails (requires root/admin)
 - **TCP Fallback**: Automatic TCP mode if all ICMP methods fail
 - **EINTR Handling**: Properly handles interrupted system calls with retry logic
 - Provides pure network-level latency without application overhead

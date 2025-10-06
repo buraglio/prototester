@@ -656,11 +656,11 @@ func (lt *LatencyTester) testICMPv4(seq int) PingResult {
 
 func (lt *LatencyTester) tryRawICMPv4(seq int) PingResult {
 	// Create raw socket for IPv4 ICMP
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	fd, err := socketCreate(syscall.AF_INET, syscall.SOCK_RAW, IPPROTO_ICMP)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error creating IPv4 raw socket: %v (try running with sudo)", err), Timestamp: time.Now()}
 	}
-	defer syscall.Close(fd)
+	defer socketClose(fd)
 
 	dst, err := net.ResolveIPAddr("ip4", lt.target4)
 	if err != nil {
@@ -672,11 +672,11 @@ func (lt *LatencyTester) tryRawICMPv4(seq int) PingResult {
 
 func (lt *LatencyTester) tryUnprivilegedICMPv4(seq int) PingResult {
 	// Try unprivileged ICMP socket on Linux
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, syscall.IPPROTO_ICMP)
+	fd, err := socketCreate(syscall.AF_INET, syscall.SOCK_DGRAM, IPPROTO_ICMP)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error creating IPv4 unprivileged ICMP socket: %v", err), Timestamp: time.Now()}
 	}
-	defer syscall.Close(fd)
+	defer socketClose(fd)
 
 	dst, err := net.ResolveIPAddr("ip4", lt.target4)
 	if err != nil {
@@ -686,7 +686,7 @@ func (lt *LatencyTester) tryUnprivilegedICMPv4(seq int) PingResult {
 	// Connect the socket to the destination
 	addr := &syscall.SockaddrInet4{}
 	copy(addr.Addr[:], dst.IP.To4())
-	err = syscall.Connect(fd, addr)
+	err = socketConnect(fd, addr)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error connecting socket: %v", err), Timestamp: time.Now()}
 	}
@@ -694,7 +694,7 @@ func (lt *LatencyTester) tryUnprivilegedICMPv4(seq int) PingResult {
 	return lt.sendICMPv4Unprivileged(fd, dst, seq)
 }
 
-func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int) PingResult {
+func (lt *LatencyTester) sendICMPv4Unprivileged(fd socketFd, dst *net.IPAddr, seq int) PingResult {
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
@@ -711,7 +711,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
 	// Send packet (socket is already connected)
-	_, err := syscall.Write(fd, packet)
+	_, err := socketWrite(fd, packet)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
@@ -728,8 +728,8 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 		}
 
 		// Wait for socket to be readable
-		fdSet := &syscall.FdSet{}
-		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+		fdSet := newFdSet()
+		fdSet.setFd(fd)
 
 		tv := syscall.NsecToTimeval(remaining.Nanoseconds())
 
@@ -744,7 +744,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
 		}
 
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		n, _, err := socketRecvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -768,7 +768,7 @@ func (lt *LatencyTester) sendICMPv4Unprivileged(fd int, dst *net.IPAddr, seq int
 	}
 }
 
-func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingResult {
+func (lt *LatencyTester) sendICMPv4Raw(fd socketFd, dst *net.IPAddr, seq int) PingResult {
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
@@ -793,19 +793,19 @@ func (lt *LatencyTester) sendICMPv4Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	copy(addr.Addr[:], dst.IP.To4())
 
 	// Send packet
-	err := syscall.Sendto(fd, packet, 0, addr)
+	err := socketSendto(fd, packet, 0, addr)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
 	// Set socket timeout
 	tv := syscall.NsecToTimeval(lt.timeout.Nanoseconds())
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+	socketSetsockoptTimeval(fd, syscall.SOL_SOCKET, SO_RCVTIMEO, &tv)
 
 	// Read response
 	reply := make([]byte, 1500)
 	for {
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		n, _, err := socketRecvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -865,11 +865,11 @@ func (lt *LatencyTester) testICMPv6(seq int) PingResult {
 
 func (lt *LatencyTester) tryRawICMPv6(seq int) PingResult {
 	// Create raw socket for IPv6 ICMPv6
-	fd, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_RAW, syscall.IPPROTO_ICMPV6)
+	fd, err := socketCreate(syscall.AF_INET6, syscall.SOCK_RAW, IPPROTO_ICMPV6)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error creating IPv6 raw socket: %v (try running with sudo)", err), Timestamp: time.Now()}
 	}
-	defer syscall.Close(fd)
+	defer socketClose(fd)
 
 	dst, err := net.ResolveIPAddr("ip6", lt.target6)
 	if err != nil {
@@ -881,11 +881,11 @@ func (lt *LatencyTester) tryRawICMPv6(seq int) PingResult {
 
 func (lt *LatencyTester) tryUnprivilegedICMPv6(seq int) PingResult {
 	// Try unprivileged ICMP socket on Linux
-	fd, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_DGRAM, syscall.IPPROTO_ICMPV6)
+	fd, err := socketCreate(syscall.AF_INET6, syscall.SOCK_DGRAM, IPPROTO_ICMPV6)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error creating IPv6 unprivileged ICMP socket: %v", err), Timestamp: time.Now()}
 	}
-	defer syscall.Close(fd)
+	defer socketClose(fd)
 
 	dst, err := net.ResolveIPAddr("ip6", lt.target6)
 	if err != nil {
@@ -895,7 +895,7 @@ func (lt *LatencyTester) tryUnprivilegedICMPv6(seq int) PingResult {
 	// Connect the socket to the destination
 	addr := &syscall.SockaddrInet6{}
 	copy(addr.Addr[:], dst.IP.To16())
-	err = syscall.Connect(fd, addr)
+	err = socketConnect(fd, addr)
 	if err != nil {
 		return PingResult{Success: false, Error: fmt.Errorf("error connecting socket: %v", err), Timestamp: time.Now()}
 	}
@@ -903,7 +903,7 @@ func (lt *LatencyTester) tryUnprivilegedICMPv6(seq int) PingResult {
 	return lt.sendICMPv6Unprivileged(fd, dst, seq)
 }
 
-func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int) PingResult {
+func (lt *LatencyTester) sendICMPv6Unprivileged(fd socketFd, dst *net.IPAddr, seq int) PingResult {
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
@@ -920,7 +920,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	binary.BigEndian.PutUint64(packet[8:16], uint64(start.UnixNano()))
 
 	// Send packet (socket is already connected)
-	_, err := syscall.Write(fd, packet)
+	_, err := socketWrite(fd, packet)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
@@ -937,8 +937,8 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 		}
 
 		// Wait for socket to be readable
-		fdSet := &syscall.FdSet{}
-		fdSet.Bits[fd/64] |= 1 << (uint(fd) % 64)
+		fdSet := newFdSet()
+		fdSet.setFd(fd)
 
 		tv := syscall.NsecToTimeval(remaining.Nanoseconds())
 
@@ -953,7 +953,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 			return PingResult{Success: false, Error: fmt.Errorf("timeout"), Timestamp: start}
 		}
 
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		n, _, err := socketRecvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
@@ -977,7 +977,7 @@ func (lt *LatencyTester) sendICMPv6Unprivileged(fd int, dst *net.IPAddr, seq int
 	}
 }
 
-func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingResult {
+func (lt *LatencyTester) sendICMPv6Raw(fd socketFd, dst *net.IPAddr, seq int) PingResult {
 	start := time.Now()
 	pid := os.Getpid() & 0xffff
 
@@ -998,19 +998,19 @@ func (lt *LatencyTester) sendICMPv6Raw(fd int, dst *net.IPAddr, seq int) PingRes
 	copy(addr.Addr[:], dst.IP.To16())
 
 	// Send packet
-	err := syscall.Sendto(fd, packet, 0, addr)
+	err := socketSendto(fd, packet, 0, addr)
 	if err != nil {
 		return PingResult{Success: false, Error: err, Timestamp: start}
 	}
 
 	// Set socket timeout
 	tv := syscall.NsecToTimeval(lt.timeout.Nanoseconds())
-	syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+	socketSetsockoptTimeval(fd, syscall.SOL_SOCKET, SO_RCVTIMEO, &tv)
 
 	// Read response
 	reply := make([]byte, 1500)
 	for {
-		n, _, err := syscall.Recvfrom(fd, reply, 0)
+		n, _, err := socketRecvfrom(fd, reply, 0)
 		if err != nil {
 			return PingResult{Success: false, Error: err, Timestamp: start}
 		}
