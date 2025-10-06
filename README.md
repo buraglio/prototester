@@ -28,7 +28,7 @@ ProtoTester uses a reasonably sophisticated scoring algorithm to compare network
 
 #### 1. Latency (Round-Trip Time)
 - **Measurement**: Time taken for a packet/request to reach the destination and return
-- **Precision**: Nanosecond-level timing for maximum accuracy
+- **Precision**: Nanosecond-level timing for maximum accuracy. This obviously requires a decent clock. It *should* be very accurate, but has (to date) not been tested with a PTP 1588 clock source. Any volunteers?
 - **Statistics Provided**:
   - **Minimum**: Fastest observed latency (best-case performance)
   - **Maximum**: Slowest observed latency (worst-case performance)
