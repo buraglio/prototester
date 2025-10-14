@@ -1,0 +1,693 @@
+<script>
+  import { RunTest, GetDefaultConfig } from '../wailsjs/go/main/App.js';
+  import { onMount } from 'svelte';
+  import History from './History.svelte';
+  import SavedConfigs from './SavedConfigs.svelte';
+  import VerboseLog from './VerboseLog.svelte';
+
+  let config = {
+    protocol: 'tcp',
+    target4: '8.8.8.8',
+    target6: '2001:4860:4860::8888',
+    hostname: '',
+    port: 53,
+    count: 10,
+    interval: 1000,
+    timeout: 3000,
+    size: 64,
+    dnsProtocol: 'udp',
+    dnsQuery: 'dns-query.qosbox.com',
+    ipv4Only: false,
+    ipv6Only: false,
+    verbose: false
+  };
+
+  let testing = false;
+  let result = null;
+  let error = null;
+  let activeTab = 'test';
+
+  onMount(async () => {
+    try {
+      const defaultConfig = await GetDefaultConfig();
+      config = defaultConfig;
+    } catch (e) {
+      console.error('Failed to load default config:', e);
+    }
+  });
+
+  async function runTest() {
+    testing = true;
+    error = null;
+    result = null;
+
+    try {
+      const testResult = await RunTest(config);
+      result = testResult;
+      if (testResult.error) {
+        error = testResult.error;
+      }
+    } catch (e) {
+      error = e.message || 'Test failed';
+    } finally {
+      testing = false;
+    }
+  }
+
+  function loadTestFromHistory(testConfig) {
+    config = { ...testConfig };
+    activeTab = 'test';
+  }
+
+  function loadSavedConfig(savedConfig) {
+    config = { ...savedConfig };
+    activeTab = 'test';
+  }
+
+  function formatDuration(ns) {
+    if (!ns) return 'N/A';
+    const ms = ns / 1000000;
+    return ms.toFixed(2) + 'ms';
+  }
+
+  function formatSuccessRate(rate) {
+    if (rate === undefined || rate === null) return 'N/A';
+    return rate.toFixed(1) + '%';
+  }
+</script>
+
+<main>
+  <div class="header">
+    <h1>🌐 ProtoTester</h1>
+    <p class="subtitle">High-Fidelity Network Latency Testing</p>
+  </div>
+
+  <div class="tabs">
+    <button
+      class="tab"
+      class:active={activeTab === 'test'}
+      on:click={() => activeTab = 'test'}
+    >
+      ⚡ Test
+    </button>
+    <button
+      class="tab"
+      class:active={activeTab === 'history'}
+      on:click={() => activeTab = 'history'}
+    >
+      📜 History
+    </button>
+    <button
+      class="tab"
+      class:active={activeTab === 'configs'}
+      on:click={() => activeTab = 'configs'}
+    >
+      💾 Saved Configs
+    </button>
+  </div>
+
+  <div class="tab-content">
+    {#if activeTab === 'test'}
+      <div class="container">
+        <!-- Configuration Panel -->
+        <div class="config-panel">
+          <h2>Test Configuration</h2>
+
+          <div class="form-group">
+            <label for="protocol">Protocol</label>
+            <select id="protocol" bind:value={config.protocol}>
+              <option value="tcp">TCP Connect</option>
+              <option value="udp">UDP</option>
+              <option value="icmp">ICMP Ping</option>
+              <option value="http">HTTP/HTTPS</option>
+              <option value="dns">DNS Query</option>
+              <option value="compare">Compare IPv4/IPv6</option>
+            </select>
+          </div>
+
+          {#if config.protocol === 'compare'}
+            <div class="form-group">
+              <label for="hostname">Hostname</label>
+              <input id="hostname" type="text" bind:value={config.hostname} placeholder="google.com" />
+            </div>
+          {:else}
+            <div class="form-group">
+              <label for="target4">IPv4 Target</label>
+              <input id="target4" type="text" bind:value={config.target4} />
+            </div>
+
+            <div class="form-group">
+              <label for="target6">IPv6 Target</label>
+              <input id="target6" type="text" bind:value={config.target6} />
+            </div>
+          {/if}
+
+          {#if config.protocol !== 'icmp'}
+            <div class="form-group">
+              <label for="port">Port</label>
+              <input id="port" type="number" bind:value={config.port} />
+            </div>
+          {/if}
+
+          {#if config.protocol === 'dns'}
+            <div class="form-group">
+              <label for="dnsProtocol">DNS Protocol</label>
+              <select id="dnsProtocol" bind:value={config.dnsProtocol}>
+                <option value="udp">UDP</option>
+                <option value="tcp">TCP</option>
+                <option value="dot">DNS over TLS (DoT)</option>
+                <option value="doh">DNS over HTTPS (DoH)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="dnsQuery">Query Domain</label>
+              <input id="dnsQuery" type="text" bind:value={config.dnsQuery} />
+            </div>
+          {/if}
+
+          {#if config.protocol === 'icmp'}
+            <div class="form-group">
+              <label for="size">Packet Size (bytes)</label>
+              <input id="size" type="number" bind:value={config.size} min="32" max="1500" />
+            </div>
+          {/if}
+
+          <div class="form-group">
+            <label for="count">Test Count</label>
+            <input id="count" type="number" bind:value={config.count} min="1" max="100" />
+          </div>
+
+          <div class="form-group">
+            <label for="interval">Interval (ms)</label>
+            <input id="interval" type="number" bind:value={config.interval} min="100" max="10000" />
+          </div>
+
+          <div class="form-group">
+            <label for="timeout">Timeout (ms)</label>
+            <input id="timeout" type="number" bind:value={config.timeout} min="500" max="30000" />
+          </div>
+
+          {#if config.protocol !== 'compare'}
+            <div class="form-group checkbox-group">
+              <label>
+                <input type="checkbox" bind:checked={config.ipv4Only} />
+                IPv4 Only
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={config.ipv6Only} />
+                IPv6 Only
+              </label>
+            </div>
+          {/if}
+
+          <div class="form-group">
+            <label class="checkbox-label-inline">
+              <input type="checkbox" bind:checked={config.verbose} />
+              <span>Enable Verbose Output</span>
+            </label>
+          </div>
+
+          <button class="btn-primary" on:click={runTest} disabled={testing}>
+            {testing ? '🔄 Testing...' : '▶️ Run Test'}
+          </button>
+        </div>
+
+        <!-- Results Panel -->
+        <div class="results-panel">
+          <h2>Test Results</h2>
+
+          <VerboseLog visible={config.verbose} />
+
+          {#if testing}
+            <div class="loading">
+              <div class="spinner"></div>
+              <p>Running network tests...</p>
+            </div>
+          {:else if error}
+            <div class="error">
+              <p>❌ Error: {error}</p>
+            </div>
+          {:else if result}
+            <div class="results">
+              <div class="result-header">
+                <span class="protocol-badge">{result.protocol}</span>
+                <span class="timestamp">{new Date(result.timestamp).toLocaleString()}</span>
+              </div>
+
+              {#if result.ipv4_results}
+                <div class="result-section">
+                  <h3>📡 IPv4 Results ({result.targets?.ipv4 || config.target4})</h3>
+                  <div class="stats-grid">
+                    <div class="stat">
+                      <span class="stat-label">Success Rate</span>
+                      <span class="stat-value success">{formatSuccessRate(result.ipv4_results.success_rate)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Sent / Received</span>
+                      <span class="stat-value">{result.ipv4_results.sent} / {result.ipv4_results.received}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Min Latency</span>
+                      <span class="stat-value">{formatDuration(result.ipv4_results.min_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Avg Latency</span>
+                      <span class="stat-value avg">{formatDuration(result.ipv4_results.avg_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Max Latency</span>
+                      <span class="stat-value">{formatDuration(result.ipv4_results.max_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Jitter</span>
+                      <span class="stat-value">{formatDuration(result.ipv4_results.jitter_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Std Dev</span>
+                      <span class="stat-value">{formatDuration(result.ipv4_results.stddev_ms)}</span>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
+              {#if result.ipv6_results}
+                <div class="result-section">
+                  <h3>📡 IPv6 Results ({result.targets?.ipv6 || config.target6})</h3>
+                  <div class="stats-grid">
+                    <div class="stat">
+                      <span class="stat-label">Success Rate</span>
+                      <span class="stat-value success">{formatSuccessRate(result.ipv6_results.success_rate)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Sent / Received</span>
+                      <span class="stat-value">{result.ipv6_results.sent} / {result.ipv6_results.received}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Min Latency</span>
+                      <span class="stat-value">{formatDuration(result.ipv6_results.min_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Avg Latency</span>
+                      <span class="stat-value avg">{formatDuration(result.ipv6_results.avg_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Max Latency</span>
+                      <span class="stat-value">{formatDuration(result.ipv6_results.max_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Jitter</span>
+                      <span class="stat-value">{formatDuration(result.ipv6_results.jitter_ms)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-label">Std Dev</span>
+                      <span class="stat-value">{formatDuration(result.ipv6_results.stddev_ms)}</span>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
+              {#if result.comparison}
+                <div class="comparison-section">
+                  <h3>🏆 Comparison Results</h3>
+                  <div class="comparison-scores">
+                    <div class="score-card">
+                      <h4>IPv4 Score</h4>
+                      <div class="score">{result.comparison.ipv4_score.toFixed(2)}</div>
+                    </div>
+                    <div class="score-card">
+                      <h4>IPv6 Score</h4>
+                      <div class="score">{result.comparison.ipv6_score.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <div class="winner">
+                    <strong>Winner:</strong> {result.comparison.winner}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <div class="no-results">
+              <p>👆 Configure test parameters and click "Run Test" to begin</p>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {:else if activeTab === 'history'}
+      <div class="full-width-panel">
+        <History onLoadTest={loadTestFromHistory} />
+      </div>
+    {:else if activeTab === 'configs'}
+      <div class="full-width-panel">
+        <SavedConfigs currentConfig={config} onLoadConfig={loadSavedConfig} />
+      </div>
+    {/if}
+  </div>
+</main>
+
+<style>
+  :global(body) {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  }
+
+  main {
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  .header {
+    text-align: center;
+    color: white;
+    margin-bottom: 20px;
+  }
+
+  .header h1 {
+    font-size: 3rem;
+    margin: 0;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+  }
+
+  .subtitle {
+    font-size: 1.2rem;
+    margin: 10px 0 0 0;
+    opacity: 0.9;
+  }
+
+  .tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+
+  .tab {
+    padding: 12px 24px;
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    backdrop-filter: blur(10px);
+  }
+
+  .tab:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  .tab.active {
+    background: white;
+    color: #667eea;
+    border-color: white;
+  }
+
+  .tab-content {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .container {
+    display: grid;
+    grid-template-columns: 400px 1fr;
+    gap: 20px;
+  }
+
+  .full-width-panel {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    min-height: 600px;
+  }
+
+  .config-panel, .results-panel {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+  }
+
+  .config-panel {
+    height: fit-content;
+  }
+
+  h2 {
+    margin: 0 0 20px 0;
+    color: #333;
+    font-size: 1.5rem;
+    border-bottom: 2px solid #667eea;
+    padding-bottom: 10px;
+  }
+
+  h3 {
+    margin: 20px 0 15px 0;
+    color: #444;
+    font-size: 1.2rem;
+  }
+
+  .form-group {
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    margin-bottom: 6px;
+    color: #555;
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .checkbox-label-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .checkbox-label-inline input {
+    cursor: pointer;
+  }
+
+  .checkbox-label-inline span {
+    font-weight: 600;
+    color: #667eea;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    transition: border-color 0.3s;
+    box-sizing: border-box;
+  }
+
+  input:focus,
+  select:focus {
+    outline: none;
+    border-color: #667eea;
+  }
+
+  .checkbox-group {
+    display: flex;
+    gap: 20px;
+  }
+
+  .checkbox-group label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    margin-top: 10px;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .loading {
+    text-align: center;
+    padding: 60px 20px;
+  }
+
+  .spinner {
+    width: 50px;
+    height: 50px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #667eea;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 20px;
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .no-results {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+    font-size: 1.1rem;
+  }
+
+  .error {
+    background: #fee;
+    border: 2px solid #fcc;
+    border-radius: 8px;
+    padding: 20px;
+    color: #c00;
+    font-weight: 500;
+  }
+
+  .results {
+    animation: fadeIn 0.5s;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .protocol-badge {
+    background: #667eea;
+    color: white;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+
+  .timestamp {
+    color: #999;
+    font-size: 0.85rem;
+  }
+
+  .result-section {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+
+  .stat {
+    background: white;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  }
+
+  .stat-label {
+    display: block;
+    font-size: 0.8rem;
+    color: #888;
+    margin-bottom: 6px;
+  }
+
+  .stat-value {
+    display: block;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .stat-value.success {
+    color: #28a745;
+  }
+
+  .stat-value.avg {
+    color: #667eea;
+  }
+
+  .comparison-section {
+    background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .comparison-scores {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 20px 0;
+  }
+
+  .score-card {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .score-card h4 {
+    margin: 0 0 10px 0;
+    color: #666;
+    font-size: 1rem;
+  }
+
+  .score {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #667eea;
+  }
+
+  .winner {
+    text-align: center;
+    font-size: 1.3rem;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    margin-top: 20px;
+  }
+
+  .winner strong {
+    color: #667eea;
+  }
+
+  @media (max-width: 1024px) {
+    .container {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
