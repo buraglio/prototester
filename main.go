@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: BSD-3-Clause-LBNL
+// Copyright (C) buraglio@forwardingplane.net
+
 package main
 
 import (
@@ -635,7 +638,7 @@ func (lt *LatencyTester) testICMPv4(seq int) PingResult {
 
 	// If unprivileged fails, try raw socket ICMP
 	if strings.Contains(result.Error.Error(), "operation not permitted") ||
-	   strings.Contains(result.Error.Error(), "permission denied") {
+		strings.Contains(result.Error.Error(), "permission denied") {
 		result = lt.tryRawICMPv4(seq)
 		if result.Success {
 			return result
@@ -644,7 +647,7 @@ func (lt *LatencyTester) testICMPv4(seq int) PingResult {
 
 	// If ICMP fails due to permissions, fall back to TCP
 	if strings.Contains(result.Error.Error(), "operation not permitted") ||
-	   strings.Contains(result.Error.Error(), "permission denied") {
+		strings.Contains(result.Error.Error(), "permission denied") {
 		if lt.verbose {
 			fmt.Printf("ICMP failed (no root), falling back to TCP connect test...\n")
 		}
@@ -844,7 +847,7 @@ func (lt *LatencyTester) testICMPv6(seq int) PingResult {
 
 	// If unprivileged fails, try raw socket ICMP
 	if strings.Contains(result.Error.Error(), "operation not permitted") ||
-	   strings.Contains(result.Error.Error(), "permission denied") {
+		strings.Contains(result.Error.Error(), "permission denied") {
 		result = lt.tryRawICMPv6(seq)
 		if result.Success {
 			return result
@@ -853,7 +856,7 @@ func (lt *LatencyTester) testICMPv6(seq int) PingResult {
 
 	// If ICMP fails due to permissions, fall back to TCP
 	if strings.Contains(result.Error.Error(), "operation not permitted") ||
-	   strings.Contains(result.Error.Error(), "permission denied") {
+		strings.Contains(result.Error.Error(), "permission denied") {
 		if lt.verbose {
 			fmt.Printf("ICMP failed (no root), falling back to TCP connect test...\n")
 		}
